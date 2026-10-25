@@ -1,6 +1,11 @@
 {
   "storage": "IndexedDB",
   "defaultEnabled": true,
+  "delayedStorageModule": {
+    "barrierInstalledBeforeApp": true,
+    "facadeAbsentWhileWaiting": true,
+    "noPrematureFailure": true
+  },
   "toolbar": {
     "cssLoaded": true,
     "normalFlow": true,

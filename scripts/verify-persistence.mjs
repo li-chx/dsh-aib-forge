@@ -107,13 +107,47 @@ export async function verifyPersistence({ browser, origin, backendUrl, target, r
     assert.notEqual(await page.evaluate(() => performance.timeOrigin), before)
   }
   try {
-    await page.goto(url)
+    const intercepted = Promise.withResolvers()
+    const release = Promise.withResolvers()
+    const continued = Promise.withResolvers()
+    const storageModule = '**/assets/preview-storage-*.js'
+    let held = false
+    const holdStorageModule = async route => {
+      held = true
+      intercepted.resolve()
+      await release.promise
+      try { await route.continue() } finally { continued.resolve() }
+    }
+    await page.route(storageModule, holdStorageModule)
+    try {
+      const requested = page.waitForRequest(storageModule)
+      await page.goto(url, { waitUntil: 'commit' })
+      // AppWebEntry constructs this page before it awaits the startup barrier.
+      await Promise.all([requested, page.locator('[data-dsh-boot]').waitFor()])
+      await intercepted.promise
+      const waiting = await page.evaluate(async () => {
+        const barrier = window.__DSH_BOOT_READY__
+        let settled = false
+        barrier?.promise.then(() => { settled = true }, () => { settled = true })
+        await Promise.resolve()
+        return { barrierInstalled:Boolean(barrier),barrierSettled:settled,facadeInstalled:Boolean(window.__ModuleLoader__),bootText:document.querySelector('[data-dsh-boot]')?.textContent }
+      })
+      assert.equal(waiting.barrierInstalled, true, JSON.stringify(waiting))
+      assert.equal(waiting.barrierSettled, false, JSON.stringify(waiting))
+      assert.equal(waiting.facadeInstalled, false, JSON.stringify(waiting))
+      assert(!waiting.bootText.includes('Failed to load plugins'), JSON.stringify(waiting))
+      console.log('Built application waits behind the installed boot barrier while storage UI JavaScript is held')
+    } finally {
+      release.resolve()
+      if (held) await continued.promise
+      await page.unroute(storageModule, holdStorageModule)
+    }
     await ready(page)
     console.log('Persistent Worker ready; installing fixture')
     await install('1.0.0')
     console.log('Persistent fixture active; writing session and workspace')
     session = await rpc(page, 'session/create', { request: { cwd: '/dsh/workspace' } })
-    await rpc(page, 'session/rename', { request: { sessionId: session.sessionId, title: 'Durable browser session' } })
+    const renamed = await rpc(page, 'session/rename', { request: { sessionId: session.sessionId, title: 'Durable browser session' } })
     assert.equal((await command('/forge-store-write')).result.text, 'saved-1')
     assert.deepEqual((await read()).config, initialConfig)
     await command('/forge-store-config')
@@ -124,12 +158,26 @@ export async function verifyPersistence({ browser, origin, backendUrl, target, r
     }, { id: session.sessionId, expected: 'edited' })
     await page.locator('[data-persistence-client="1.0.0"]').waitFor()
     await flush(page)
+    const beforeSessions = await rpc(page, 'session/list', { _request:{} })
+    assert.equal(renamed.title, 'Durable browser session')
+    assert(beforeSessions.items.some(item=>item.sessionId===session.sessionId && item.projections.values.title===renamed.title))
+    const storedSession = await page.evaluate(async id => {
+      const namespaces=await indexedDB.databases()
+      const name=namespaces.find(item=>item.name.startsWith('dsh-vfs:')).name
+      const database=await new Promise((resolve,reject)=>{const request=indexedDB.open(name);request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error)})
+      const tx=database.transaction('chunks')
+      const request=method=>new Promise((resolve,reject)=>{const request=tx.objectStore('chunks')[method]();request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error)})
+      const [keys,values]=await Promise.all([request('getAllKeys'),request('getAll')])
+      database.close()
+      return keys.flatMap((key,index)=>String(key[0]).includes(id) && String(key[0]).endsWith('/session.v4.jsonl')?[{bytes:values[index].length,title:new TextDecoder().decode(values[index]).includes('Durable browser session')}]:[])
+    },session.sessionId)
+    assert(storedSession.some(chunk=>chunk.title), `Storage flush acknowledged before the Session title reached IndexedDB: ${JSON.stringify(storedSession)}`)
     await context.route(`${backendUrl}/**`, route => route.abort())
     await reload()
     await page.locator('[data-persistence-client="1.0.0"]').waitFor()
     assert.deepEqual(await read(), { version:'1.0.0',config:editedConfig,content:'saved-1',fixture:null })
     const sessions = await rpc(page, 'session/list', { _request:{} })
-    assert(sessions.items.some(item => item.sessionId === session.sessionId && item.projections.values.title === 'Durable browser session'), JSON.stringify(sessions))
+    assert(sessions.items.some(item => item.sessionId === session.sessionId && item.projections.values.title === 'Durable browser session'), JSON.stringify({expectedSessionId:session.sessionId,...sessions}))
     assert.equal((await runtime(page, '/__forge/installed')).plugins.find(plugin => plugin.name === name)?.status, 'active')
     console.log('IndexedDB reload restored plugin, edited configuration, workspace and named session with Forge offline')
     await context.unroute(`${backendUrl}/**`)
@@ -246,7 +294,7 @@ export async function verifyPersistence({ browser, origin, backendUrl, target, r
     }, corrupt), 'corrupt-revision')
     assert.equal(await page.evaluate(() => Boolean(window.__DSH_TRANSPORT__)), false)
     await page.screenshot({path:resolve(root,'.data/forge-storage-corrupt.png')})
-    const observed = { storage:'IndexedDB', defaultEnabled:true,toolbar:{cssLoaded:true,normalFlow:true,narrowViewport:true}, committedReload:{plugin:true,client:true,editedConfiguration:true,workspace:true,namedSession:true}, forgeOfflineRestore:true, disabledSelectionRestored:true, updateRestored:true, uninstallRestored:true, sourceIsolated:true, staleTab:{code:'STORAGE_CONFLICT',visible:true}, abortedTransaction:{code:'STORAGE_FAILED',visible:true,recoveredByReload:true}, corruptedBoot:{rejected:true,bytesRetained:true}, coldWorkerStarts:workers }
+    const observed = { storage:'IndexedDB', defaultEnabled:true,delayedStorageModule:{barrierInstalledBeforeApp:true,facadeAbsentWhileWaiting:true,noPrematureFailure:true},toolbar:{cssLoaded:true,normalFlow:true,narrowViewport:true}, committedReload:{plugin:true,client:true,editedConfiguration:true,workspace:true,namedSession:true}, forgeOfflineRestore:true, disabledSelectionRestored:true, updateRestored:true, uninstallRestored:true, sourceIsolated:true, staleTab:{code:'STORAGE_CONFLICT',visible:true}, abortedTransaction:{code:'STORAGE_FAILED',visible:true,recoveredByReload:true}, corruptedBoot:{rejected:true,bytesRetained:true}, coldWorkerStarts:workers }
     const text = JSON.stringify(observed,null,2)+'\n'
     const golden=resolve(root,'tests/expected/persistence.json')
     if(refreshSnapshot) await writeFile(golden,text)
