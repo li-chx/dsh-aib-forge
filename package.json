@@ -1,0 +1,37 @@
+{
+  "name": "dsh-forge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.9"
+  },
+  "packageManager": "pnpm@11.28.5",
+  "scripts": {
+    "dev": "tsx src/main.ts",
+    "build": "tsc",
+    "start": "node dist/main.js",
+    "test": "tsx --test tests/*.test.ts",
+    "check": "tsc --noEmit && tsc --noEmit -p tsconfig.tests.json",
+    "smoke:npm": "tsx tests/npm-smoke.ts",
+    "preview:prepare": "node scripts/prepare-preview.mjs",
+    "test:browser": "node scripts/verify-browser.mjs",
+    "smoke:published": "tsx tests/published-smoke.ts",
+    "test:plugin-hub": "node scripts/verify-plugin-hub.mjs"
+  },
+  "dependencies": {
+    "acorn": "^8.15.0",
+    "acorn-walk": "^8.3.4",
+    "esbuild": "^0.25.0",
+    "resolve.exports": "^2.0.3",
+    "semver": "^7.7.0",
+    "yaml": "^2.9.1",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/semver": "^7.7.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}

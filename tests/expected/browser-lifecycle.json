@@ -1,0 +1,19 @@
+{
+  "command": [
+    "test v1",
+    "test v2"
+  ],
+  "repeatedInstall": {
+    "downloadedFiles": 0,
+    "writtenFiles": 0
+  },
+  "removed": true,
+  "workerStarts": 1,
+  "documentPreserved": true,
+  "fileBatchReported": true,
+  "rejectedBeforeWrite": [
+    "generation-mismatch",
+    "core-package",
+    "integrity-failed"
+  ]
+}

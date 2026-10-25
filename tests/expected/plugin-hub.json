@@ -1,0 +1,78 @@
+{
+  "httpPort": {
+    "dedicatedWorker": true,
+    "postFields": true,
+    "progressiveResponse": true,
+    "abortReachedProvider": true
+  },
+  "mobile": {
+    "versions": [
+      "3.2.0",
+      "3.2.1"
+    ],
+    "clientReplaced": true,
+    "viewportWidth": 390,
+    "drawerOpened": true,
+    "escapeClosed": true,
+    "backdropClosed": true,
+    "horizontalOverflow": false,
+    "nativeFetchRoute": true,
+    "temporarySessionDeleted": true,
+    "removedStylesAndControls": true,
+    "removedHostRoute": true
+  },
+  "router": {
+    "package": "@ljwei-stak/dsh-model-router@0.25.1",
+    "hostCommand": true,
+    "clientWorkspace": true,
+    "hostVersion": null,
+    "singleRegistration": true,
+    "removed": true,
+    "modelRequest": false,
+    "nativeCli": false
+  },
+  "whaleGirl": {
+    "package": "whale-girl@0.1.0",
+    "status": "activation-failed",
+    "missingApi": "ctx.jobs.onJobDone",
+    "clientMounted": true,
+    "existingPluginPreserved": true,
+    "packageRemoved": true,
+    "clientCleanupComplete": false
+  },
+  "package": "dsh-plugin@2.2.1",
+  "hostRoutes": true,
+  "clientFactory": true,
+  "settingsSection": true,
+  "catalogThroughCurl": true,
+  "catalogListVisible": true,
+  "releaseAgeThroughHttps": true,
+  "marketplaceReopened": true,
+  "nativeManagerPackagesAvailable": true,
+  "marketplacePreservedAfterPluginInstall": true,
+  "marketplaceUiInstall": true,
+  "nativeToggleSingleRegistration": true,
+  "installQueue": {
+    "package": "forge-hub-acceptance-plugin@1.0.0",
+    "status": "done",
+    "command": "hub child active",
+    "sha256": "1586b8f9fcfa5ccb675e507ea82c8226cd00fe693d1f6908f5aab8c3f18beb97"
+  },
+  "whale": {
+    "package": "dsh-whale-widget@0.4.2",
+    "status": "failed",
+    "code": "NODE_MODULE_UNSUPPORTED",
+    "module": "node:dns",
+    "activated": false
+  },
+  "updateQueue": {
+    "status": "done",
+    "singleLoaderEntry": true
+  },
+  "removeQueue": {
+    "status": "done",
+    "commandRemoved": true
+  },
+  "workerStarts": 1,
+  "documentPreserved": true
+}
