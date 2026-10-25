@@ -6,7 +6,8 @@ import { verifyHttpPort } from './verify-http-port.mjs'
 import { verifyMobilePlugin } from './verify-mobile-plugin.mjs'
 import { verifyExtraPlugins } from './verify-extra-plugins.mjs'
 import { verifyIndustryPlugin } from './verify-industry-plugin.mjs'
-import { overrideFixtureName, overrideFixtures, verifyBundleOverrides } from './verify-bundle-overrides.mjs'
+import { overrideFixtures, verifyBundleOverrides } from './verify-bundle-overrides.mjs'
+import { dnsFixtures, unsupportedNetName, verifyOptionalDns } from './verify-optional-dns.mjs'
 import { once } from 'node:events'
 import { createServer } from 'node:http'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -62,6 +63,7 @@ const frontend = createServer((request, response) => {
 })
 let backend
 let whaleBuildFailure
+let netBuildFailure
 let browser
 try {
   frontend.listen(0, values.host === '127.0.0.1' ? '127.0.0.1' : '0.0.0.0')
@@ -80,6 +82,7 @@ try {
     const isBuild = request.method === 'POST' && new URL(request.url).pathname === '/v1/packages/builds'
     const build = isBuild ? await request.clone().json() : undefined
     const response = await handler(request)
+    if (build?.spec === `${unsupportedNetName}@1.0.0`) netBuildFailure = { status: response.status, body: await response.clone().json() }
     if (build?.spec === 'dsh-whale-widget@0.4.2') whaleBuildFailure = { status: response.status, body: await response.clone().json() }
     return response
   }, { hostname: '127.0.0.1', port: 0 })
@@ -257,19 +260,30 @@ try {
   assert.equal(loaderEntries.entries.filter(entry => entry.name === fixtureName).length, 1)
   assert.deepEqual(JSON.parse((await configCommand()).result.text), fixtureConfig)
   console.log('Hub fixture updated through @latest with configuration retained')
+  const optionalDns = await verifyOptionalDns({ page, hub, waitTask, rpc, session, netBuildFailure: () => netBuildFailure })
   const whaleCreated = await hub('/install', { repo: 'dsh-whale-widget', source: 'custom', installChannel: 'npm', lang: 'en', version: '0.4.2' })
   assert.equal(whaleCreated.ok, true)
   const whaleTask = await waitTask(whaleCreated.task)
-  assert.equal(whaleTask.status, 'failed', JSON.stringify(whaleTask))
-  assert(whaleBuildFailure && whaleBuildFailure.status >= 400)
-  assert.equal(whaleBuildFailure.body.error.code, 'NODE_MODULE_UNSUPPORTED')
-  assert.match(whaleTask.lines.join('\n'), /node:dns/)
-  const afterWhale = await hub('/installed')
-  assert.equal(afterWhale.installed['dsh-whale-widget'], undefined)
-  assert(!afterWhale.loaded.includes('dsh-whale-widget'))
+  console.log('Whale widget task: ' + JSON.stringify(whaleTask))
+  console.log('Whale widget build status: ' + whaleBuildFailure?.status)
+  assert.equal(whaleBuildFailure?.status, 200, JSON.stringify(whaleBuildFailure))
+  await hub('/installed')
+  const whaleForge = await page.evaluate(async () => (await window.__DSH_TRANSPORT__.fetch('/__forge/installed')).json())
+  const whaleStatus = whaleForge.plugins.find(plugin => plugin.name === 'dsh-whale-widget')?.status
+  console.log('Whale widget Forge status: ' + whaleStatus)
   assert.equal(await page.locator('.dshwv-root').count(), 0)
+  const whaleServices = JSON.parse((await rpc('commands/execute', { agentId: session.sessionId, line: '/forge-hub-whale-services', submittedAttachments: [] })).result.text)
+  console.log('Whale service availability: ' + JSON.stringify(whaleServices))
+  assert.deepEqual(whaleServices, { webServer: true, credentials: true, connection: true, tapIndex: 'function', rawWhaleInjection: true })
+  const whalePage = await page.evaluate(async () => ({ scriptElements: document.querySelectorAll('script[src*="/dsh-whale/widget.js"]').length, routeStatus: (await window.__DSH_TRANSPORT__.fetch('/dsh-whale/widget.js')).status }))
+  console.log('Whale page state: ' + JSON.stringify(whalePage))
+  assert.deepEqual(whalePage, { scriptElements: 0, routeStatus: 200 })
+  assert.equal(whaleTask.status, 'done')
+  assert.equal(whaleStatus, 'active')
   assert.equal((await command()).result.text, 'hub child active')
-  console.log('Whale DNS requirement rejected without activation; existing command preserved')
+  const whaleRemoving = await hub('/uninstall', { name: 'dsh-whale-widget' })
+  assert.equal((await waitTask(whaleRemoving.task)).status, 'done')
+  console.log('Whale DNS import passed; legacy widget did not render; existing command preserved')
   const bundleOverrides = await verifyBundleOverrides({ page, hub, waitTask, rpc, session, fixtureConfig, fixtureName })
   const industry = await verifyIndustryPlugin({ page, hub, waitTask, rpc, session })
   const removing = await hub('/uninstall', { name: fixtureName })
@@ -283,12 +297,12 @@ try {
   assert.equal(workers, 1)
   assert.equal(await page.evaluate(() => performance.timeOrigin), timeOrigin)
   const observed = {
-    httpPort, mobile, industry, bundleOverrides, ...extra, package: 'dsh-plugin@2.2.1', hostRoutes: true, clientFactory: true, settingsSection: true,
+    httpPort, mobile, industry, bundleOverrides, optionalDns, ...extra, package: 'dsh-plugin@2.2.1', hostRoutes: true, clientFactory: true, settingsSection: true,
     catalogThroughCurl: true, catalogListVisible: true, releaseAgeThroughHttps: true,
     marketplaceReopened: true, nativeManagerPackagesAvailable: true, marketplacePreservedAfterPluginInstall: true,
     marketplaceUiInstall: true, nativeToggleSingleRegistration: true,
     installQueue: { package: `${fixtureName}@1.0.0`, status: installTask.status, command: 'hub child active', sha256: digest.result.text, configuration: fixtureConfig, annotationMetadataAccepted: true },
-    whale: { package: 'dsh-whale-widget@0.4.2', status: whaleTask.status, code: whaleBuildFailure.body.error.code, module: 'node:dns', activated: false },
+    whale: { package: 'dsh-whale-widget@0.4.2', buildStatus: whaleBuildFailure.status, taskStatus: whaleTask.status, forgeStatus: whaleStatus, services: whaleServices, page: whalePage, widgetVisible: false, existingPluginPreserved: true, removed: true },
     updateQueue: { status: updateTask.status, singleLoaderEntry: true },
     removeQueue: { status: removeTask.status, commandRemoved: true }, workerStarts: workers, documentPreserved: true,
   }
@@ -402,6 +416,7 @@ async function startRegistry() {
       const tools = ctx.tools.schemas().map(tool => tool.name).filter(name => ['industry_map', 'industry_track', 'company_scan', 'industry_report'].includes(name)).sort();
       return { kind: 'success', text: JSON.stringify({ skills, tools, resources: [...observedResources].map(path => ({ path, exists: existsSync(path) })) }) };
     } }));
+    ctx.effect(() => ctx.commands.register({ name: 'forge-hub-whale-services', description: 'Inspect legacy widget service availability', handler: () => ({ kind: 'success', text: JSON.stringify({ webServer: Boolean(ctx.get('webServer')), credentials: Boolean(ctx.get('credentials')), connection: Boolean(ctx.get('connection')), tapIndex: typeof ctx.get('webServer')?.tapIndex, rawWhaleInjection: ctx.get('webServer')?.collectIndexInjections().some(row => row.kind === 'script' && row.text.includes('/dsh-whale/widget.js')) }) }) }));
     ctx.effect(() => ctx.commands.register({ name: 'forge-hub-child', description: 'Forge acceptance command', handler: () => ({ kind: 'success', text: 'hub child active' }) }));
     ctx.effect(() => ctx.commands.register({ name: 'forge-hub-config', description: 'Forge configuration acceptance command', handler: () => ({ kind: 'success', text: JSON.stringify(config) }) }));
     ctx.effect(() => ctx.commands.register({ name: 'forge-hub-sha256', description: 'Forge SHA-256 acceptance command', handler: () => ({ kind: 'success', text: createHash('sha256').update('forge hub').digest('hex') }) }));
@@ -411,16 +426,18 @@ async function startRegistry() {
   const tarballPath = join(directory, 'fixture.tgz')
   await tar.c({ cwd: directory, file: tarballPath, gzip: true }, ['package'])
   const tarball = await readFile(tarballPath)
-  const overlays = new Map()
-  for (const fixture of overrideFixtures(fixtureName)) {
-    const folder = join(temporary, `overlay-${fixture.manifest.version}`)
+  const fixturePackages = new Map()
+  for (const fixture of [...overrideFixtures(fixtureName), ...dnsFixtures()]) {
+    const folder = join(temporary, `${fixture.manifest.name}-${fixture.manifest.version}`)
     await mkdir(join(folder, 'package'), { recursive: true })
     await writeFile(join(folder, 'package/package.json'), JSON.stringify(fixture.manifest))
     await writeFile(join(folder, 'package/cordis.patch.yml'), fixture.patch)
     await writeFile(join(folder, 'package/index.js'), fixture.source)
     const archive = join(folder, 'fixture.tgz')
     await tar.c({ cwd: folder, file: archive, gzip: true }, ['package'])
-    overlays.set(fixture.manifest.version, { manifest: fixture.manifest, bytes: await readFile(archive) })
+    const versions = fixturePackages.get(fixture.manifest.name) ?? new Map()
+    versions.set(fixture.manifest.version, { manifest: fixture.manifest, bytes: await readFile(archive) })
+    fixturePackages.set(fixture.manifest.name, versions)
   }
   let registryUrl
   const server = createServer((request, response) => {
@@ -431,18 +448,21 @@ async function startRegistry() {
         if (request.method === 'OPTIONS') {
           response.writeHead(204, { 'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS' }); response.end(); return
         }
-        if (path.startsWith(`/${overrideFixtureName}/-/`)) {
-          const version = path.slice(`/${overrideFixtureName}/-/`.length).replace(/\.tgz$/, '')
-          const fixture = overlays.get(version)
+        const packageName = path.split('/')[1]
+        const fixtures = fixturePackages.get(packageName)
+        if (fixtures && path.startsWith(`/${packageName}/-/`)) {
+          const version = path.slice(`/${packageName}/-/`.length).replace(/\.tgz$/, '')
+          const fixture = fixtures.get(version)
           response.writeHead(fixture ? 200 : 404, { 'content-type': 'application/octet-stream' }); response.end(fixture?.bytes); return
         }
-        if (path === `/${overrideFixtureName}` || path.startsWith(`/${overrideFixtureName}/`)) {
-          const versions = Object.fromEntries([...overlays].map(([version, fixture]) => [version, { ...fixture.manifest, dist: {
-            tarball: `${registryUrl}/${overrideFixtureName}/-/${version}.tgz`, integrity: `sha512-${createHash('sha512').update(fixture.bytes).digest('base64')}`,
+        if (fixtures) {
+          const latest = [...fixtures.keys()].at(-1)
+          const versions = Object.fromEntries([...fixtures].map(([version, fixture]) => [version, { ...fixture.manifest, dist: {
+            tarball: `${registryUrl}/${packageName}/-/${version}.tgz`, integrity: `sha512-${createHash('sha512').update(fixture.bytes).digest('base64')}`,
           } }]))
-          const version = path.slice(overrideFixtureName.length + 2)
-          const metadata = { name: overrideFixtureName, 'dist-tags': { latest: '1.0.1' }, versions }
-          const value = version ? versions[version === 'latest' ? '1.0.1' : version] : metadata
+          const version = path.slice(packageName.length + 2)
+          const metadata = { name: packageName, 'dist-tags': { latest }, versions }
+          const value = version ? versions[version === 'latest' ? latest : version] : metadata
           response.writeHead(value ? 200 : 404, { 'content-type': 'application/json' }); response.end(JSON.stringify(value ?? { error: 'Version not found' })); return
         }
         if (path === '/fixture.tgz') {

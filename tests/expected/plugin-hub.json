@@ -64,6 +64,18 @@
     "baseRestoredOnRemoval": true,
     "originalConfigurationRestored": true
   },
+  "optionalDns": {
+    "imported": true,
+    "caughtCall": {
+      "code": "ERR_FEATURE_UNAVAILABLE_ON_PLATFORM",
+      "message": "web-preview: node:dns.setDefaultResultOrder is not available in the worker host"
+    },
+    "fallbackCommandExecuted": true,
+    "uncaughtStatus": "activation-failed",
+    "existingPluginPreserved": true,
+    "unsupportedNetCode": "NODE_MODULE_UNSUPPORTED",
+    "removed": true
+  },
   "router": {
     "package": "@ljwei-stak/dsh-model-router@0.25.1",
     "hostCommand": true,
@@ -116,10 +128,23 @@
   },
   "whale": {
     "package": "dsh-whale-widget@0.4.2",
-    "status": "failed",
-    "code": "NODE_MODULE_UNSUPPORTED",
-    "module": "node:dns",
-    "activated": false
+    "buildStatus": 200,
+    "taskStatus": "done",
+    "forgeStatus": "active",
+    "services": {
+      "webServer": true,
+      "credentials": true,
+      "connection": true,
+      "tapIndex": "function",
+      "rawWhaleInjection": true
+    },
+    "page": {
+      "scriptElements": 0,
+      "routeStatus": 200
+    },
+    "widgetVisible": false,
+    "existingPluginPreserved": true,
+    "removed": true
   },
   "updateQueue": {
     "status": "done",

@@ -82,7 +82,7 @@ Forge 是 DSH 专用的插件构建与分发服务。前端发起插件安装、
 
 dsh-plugin@2.2.1 的 Client 有显式版本兼容修复：安装队列先写入仅含 npmPackage 的记录，版本同步完成前 UI 比较 undefined 会导致设置槽位崩溃。Forge 仅在该版本的已知函数及唯一比较语句匹配时添加版本存在检查，缺省版本暂不比较，完整记录沿用原逻辑。目标不匹配时返回 CLIENT_COMPATIBILITY_MISMATCH；成功安装、更新及卸载已完成 Worker 和 Client 热加载，因此移除这些成功路径的自动整页刷新，并调整中英文提示；保留主动重启后的刷新及失败重试。补丁逐个验证目标语句数量，其他包和版本不变，修改后的字节生成独立内容哈希及 revision。
 
-外部 Node 模块能力直接取自同一 DSH lowerer 构建导出的 `MODULE_PROXIES`：仅 `node:` 名称且路径归类为 `builtin_modules/implemented/` 的模块可被编译器保留为外部引用，无前缀的等价引用会规范化。mock 分类和缺失模块仍拒绝；已实现模块中的具体操作仍受 Worker 限制，不等同于完整 Node API。此方式复用已有 crypto 等实现，不维护第二份六模块白名单，也不修改 target 协议、代际或宿主包版本校验。
+外部 Node 模块能力直接取自同一 DSH lowerer 构建导出的 `MODULE_PROXIES`：仅 `node:` 名称且路径归类为 `builtin_modules/implemented/` 或 `builtin_modules/optional/` 的模块可被编译器保留为外部引用，无前缀的等价引用会规范化。optional 模块允许插件导入后自行捕获不支持的操作；例如 DNS 配置和查询调用会抛出 `ERR_FEATURE_UNAVAILABLE_ON_PLATFORM`。mock 分类和缺失模块仍拒绝；可导入模块中的具体操作仍受 Worker 限制，不等同于完整 Node API。此方式复用已有 crypto 等实现，不维护第二份六模块白名单，也不修改 target 协议、代际或宿主包版本校验。
 
 ## 前端应用与模块身份
 

@@ -17,8 +17,8 @@ import { validateDependencies } from './resolver.js'
 
 /** The actual image transformer, injected to keep the executor independently testable. */
 export type ModuleLowerer = ((options: { filename: string; source: string }) => { code: string; moduleRequests: readonly string[]; metaResolveRequests: readonly string[] }) & {
-  /** Implemented Node modules supplied by the same DSH runtime build as this transformer. */
-  readonly implementedBuiltins?: readonly string[]
+  /** Node modules permitted for import by the same DSH build; optional operations may throw platform-unavailable errors. */
+  readonly importableBuiltins?: readonly string[]
 }
 /** Load the transformer from the operator-selected DSH build, never from a request. */
 export async function loadDshLowerer(modulePath: string): Promise<ModuleLowerer> {
@@ -26,15 +26,15 @@ export async function loadDshLowerer(modulePath: string): Promise<ModuleLowerer>
   if (typeof module.lowerModuleSource !== 'function') throw new Error('Configured DSH module does not export lowerModuleSource')
   const proxies = module.MODULE_PROXIES
   if (proxies === null || typeof proxies !== 'object' || Array.isArray(proxies)) throw new Error('Configured DSH module does not export MODULE_PROXIES')
-  const implementedBuiltins = Object.freeze(Object.entries(proxies)
-    .filter(([name, path]) => name.startsWith('node:') && typeof path === 'string' && path.startsWith('./node/builtin_modules/implemented/'))
+  const importableBuiltins = Object.freeze(Object.entries(proxies)
+    .filter(([name, path]) => name.startsWith('node:') && typeof path === 'string' && /^\.\/node\/builtin_modules\/(?:implemented|optional)\//.test(path))
     .map(([name]) => name).sort())
   const lower = module.lowerModuleSource
   return Object.freeze(Object.assign((options: { filename: string; source: string }) => {
     const result: unknown = lower(options)
     if (!result || typeof result !== 'object' || !('code' in result) || typeof result.code !== 'string' || !('moduleRequests' in result) || !Array.isArray(result.moduleRequests) || !result.moduleRequests.every((request: unknown) => typeof request === 'string') || !('metaResolveRequests' in result) || !Array.isArray(result.metaResolveRequests) || !result.metaResolveRequests.every((request: unknown) => typeof request === 'string')) throw new Error('Configured DSH lowerer returned invalid fields')
     return { code: result.code, moduleRequests: result.moduleRequests, metaResolveRequests: result.metaResolveRequests }
-  }, { implementedBuiltins }))
+  }, { importableBuiltins }))
 }
 /** Server-selected limits and runtime target. */
 export interface CompilerOptions {
@@ -100,7 +100,7 @@ export class ForgeCompiler implements BuildExecutor {
   private readonly workerBuiltins: ReadonlySet<string>
   constructor(private readonly options: CompilerOptions) {
     validateTarget(options.target)
-    this.workerBuiltins = new Set(options.lowerModule.implementedBuiltins ?? [])
+    this.workerBuiltins = new Set(options.lowerModule.importableBuiltins ?? [])
     this.allowHostPatchUpgrade = new Set(options.allowHostPatchUpgrade)
     for (const name of this.allowHostPatchUpgrade) {
       if (!Object.hasOwn(options.target.hostPackages, name)) throw new Error(`Patch-upgrade policy names unavailable host package ${name}`)

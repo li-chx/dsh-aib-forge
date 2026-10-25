@@ -324,12 +324,12 @@ test('latest registry resolution pins the reported version and leaves source dep
   await assert.rejects(compiler.build(input), { code: 'UNSUPPORTED_DEPENDENCY_SPEC' })
 })
 
-test('compiler capabilities follow the actual DSH implemented proxy roster, excluding mocks', async t => {
-  assert.ok(lowerModule.implementedBuiltins?.includes('node:crypto'))
-  assert.ok(lowerModule.implementedBuiltins?.includes('node:url'))
-  assert.ok(!lowerModule.implementedBuiltins?.includes('node:net'))
-  assert.ok(!lowerModule.implementedBuiltins?.includes('node:dns'))
-  assert.ok(!lowerModule.implementedBuiltins?.includes('node:dns/promises'))
+test('compiler import admission follows the DSH implemented and optional proxy roster, excluding mocks', async t => {
+  assert.ok(lowerModule.importableBuiltins?.includes('node:crypto'))
+  assert.ok(lowerModule.importableBuiltins?.includes('node:url'))
+  assert.ok(!lowerModule.importableBuiltins?.includes('node:net'))
+  assert.ok(lowerModule.importableBuiltins?.includes('node:dns'))
+  assert.ok(lowerModule.importableBuiltins?.includes('node:dns/promises'))
   const { compiler, store } = await setup(t)
   const manifest = await compiler.build(request('import { createHash } from "node:crypto"; export const apply = () => createHash("sha256").update("dsh-account:default").digest("hex")'))
   const file = manifest.packages[0]!.files[0]!
@@ -342,7 +342,7 @@ test('compiler capabilities follow the actual DSH implemented proxy roster, excl
   assert.equal(typeof module.exports.apply, 'function')
   if (typeof module.exports.apply !== 'function') throw new Error('Missing fixture apply')
   assert.equal(module.exports.apply(), sha256('dsh-account:default'))
-  for (const name of ['node:net', 'node:dns', 'node:dns/promises']) await assert.rejects(compiler.build(request(`export const apply = () => require("${name}")`)), { code: 'NODE_MODULE_UNSUPPORTED' })
+  for (const name of ['node:net', 'node:vm']) await assert.rejects(compiler.build(request(`export const apply = () => require("${name}")`)), { code: 'NODE_MODULE_UNSUPPORTED' })
 })
 
 test('published Client exports resolve browser/import/default conditions without selecting types', async t => {
@@ -441,4 +441,28 @@ test('mjs external defaults follow Worker ESM and CommonJS exports while CommonJ
   new Function('require', 'exports', 'module', new TextDecoder().decode(await store.get(cjsFile.objectKey)))(() => assert.fail('Unexpected dependency'), raw.exports, raw)
   assert.equal(typeof raw.exports, 'function')
   assert.equal((raw.exports as (value: number) => number)(4), 8)
+})
+
+
+test('optional DNS imports compile while actual unavailable calls fail and guarded callers can degrade', async t => {
+  const { compiler, store } = await setup(t)
+  const dns: Record<string, unknown> = await import(resolve(dshRoot, 'packages/experimental/webworker-runtime/src/node/builtin_modules/optional/dns.ts'))
+  for (const specifier of ['node:dns', 'dns']) {
+    const manifest = await compiler.build(request(`import dns from "${specifier}";
+      export const unguarded = () => dns.setDefaultResultOrder('ipv4first');
+      export const guarded = () => { try { dns.setDefaultResultOrder('ipv4first'); return 'applied' } catch (error) { return error.code } };`))
+    const pkg = manifest.packages.find(pkg => pkg.id === manifest.plugin.packageId)!
+    const file = pkg.files.find(file => file.path === pkg.entry)!
+    const code = new TextDecoder().decode(await store.get(file.objectKey))
+    assert.match(code, /require\("node:dns"\)/)
+    const module: { exports: Record<string, unknown> } = { exports: {} }
+    new Function('module', 'exports', 'require', code)(module, module.exports, (name: string) => { assert.equal(name, 'node:dns'); return dns })
+    const { unguarded, guarded } = module.exports
+    assert.equal(typeof unguarded, 'function'); assert.equal(typeof guarded, 'function')
+    if (typeof unguarded !== 'function' || typeof guarded !== 'function') throw new Error('Missing DNS fixtures')
+    assert.throws(() => unguarded(), { code: 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM' })
+    assert.equal(guarded(), 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM')
+  }
+  const result = await compiler.build(request('export const apply = () => require("node:dns/promises")'))
+  assert.equal(result.packages.length, 1)
 })
