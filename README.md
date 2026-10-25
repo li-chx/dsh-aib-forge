@@ -6,19 +6,19 @@ The initial service uses Node.js and TypeScript. Local files implement the artif
 
 ## Run locally
 
-Use Node.js 24.9 or later and pnpm 11.28.5. Build the sibling DeepSeek Harness Worker runtime first; Forge imports its actual module transformer so suspension points retain the Worker's async-context semantics. The backend does not start DSH.
+Use Node.js 24.9 or later and pnpm 11.28.5. Build the selected DeepSeek Harness checkout’s Worker runtime first; Forge imports its actual module transformer so suspension points retain the Worker's async-context semantics. The backend does not start DSH.
 
 ```sh
 pnpm install
 pnpm build
-pnpm preview:prepare
-pnpm start --target .data/preview/target.json --dsh-root ../deepseek-harness \
+pnpm preview:prepare --dsh-root /absolute/path/to/deepseek-harness
+pnpm start --target .data/preview/target.json --dsh-root /absolute/path/to/deepseek-harness \
   --origin http://localhost:36935 \
   --origin http://127.0.0.1:36935 \
   --origin http://100.76.198.140:36935
 ```
 
-`pnpm preview:prepare` copies the built static page, packs a credential-free Worker image and writes its exact package roster to `.data/preview/target.json`. Serve `.data/preview/site` with a static HTTP server. Add `?preview-fixture=none&forge=<encoded service URL>` to `/preview.html`, then open **DSH Forge**. Build the default example and execute `/forge-test`; changing `test v1` to `test v2` exercises hot replacement.
+`pnpm preview:prepare --dsh-root PATH` copies the built static page, packs a credential-free Worker image and writes its exact package roster to `.data/preview/target.json`. Serve `.data/preview/site` with a static HTTP server. Add `?preview-fixture=none&forge=<encoded service URL>` to `/preview.html`, then open **DSH Forge**. Build the default example and execute `/forge-test`; changing `test v1` to `test v2` exercises hot replacement.
 
 `target.json` is operator-controlled and must describe the exact frontend image. Its format is:
 
@@ -71,7 +71,7 @@ The compiler derives available Node module names from the selected DSH transform
 
 `dsh-plugin@2.2.1` receives a version-scoped Client repair: its npm installation queue can expose a package-name mapping before the installed version is recorded. The published UI compares that missing version and crashes its settings slot. Forge defers this comparison until a nonempty version arrives; complete records retain the original comparison. After successful Worker installation or removal, Forge has already applied the Host and Client changes. The same repair removes Hub’s automatic page reload on completion-dialog close and background completion, and changes both languages’ success messages to report hot loading. Explicit restart and request-retry actions remain available. The repair checks the known comparison, reload paths and message counts; unexpected publication changes fail with `CLIENT_COMPATIBILITY_MISMATCH`. Other packages and versions are untouched. Repaired bytes receive their own content hash and revision.
 
-`pnpm smoke:published` installs the actual `dsh-plugin@2.2.1` from npm through real HTTP, checks the Cordis patch-version admission, preserved patch bytes, the repaired Client artifact and sanitized metadata, and downloads all artifacts. The fixture uses the explicit Cordis patch option because the publication declares 4.0.1 while its test host provides 4.0.5.
+`pnpm smoke:published` installs the actual `dsh-plugin@2.2.1` from npm through real HTTP, checks the Cordis patch-version admission, preserved patch bytes, the repaired Client artifact and sanitized metadata, and downloads all artifacts. The smoke reads the selected runtime’s generation and checkout’s Cordis version. It uses the explicit Cordis patch option because the publication declares 4.0.1 while the rc.2 host provides 4.0.5.
 
 `@ljwei-stak/dsh-model-router@0.25.1` loads its Host command and Client workspace. Its Host version lookup uses a source-relative `../package.json` path that does not survive package bundling, so the UI reports an older backend despite the installed package being 0.25.1. Actual model routing and native CLI operations are not covered by this acceptance test.
 
@@ -93,15 +93,15 @@ The Fetch handler does not import Node HTTP or the compiler. An edge deployment 
 
 ```sh
 pnpm check
-pnpm test
-pnpm smoke:npm
+pnpm test --dsh-root /absolute/path/to/deepseek-harness
+pnpm smoke:npm --dsh-root /absolute/path/to/deepseek-harness
 pnpm build
-pnpm preview:prepare
-pnpm test:browser --npm
-pnpm test:plugin-hub
+pnpm preview:prepare --dsh-root /absolute/path/to/deepseek-harness
+pnpm test:browser --dsh-root /absolute/path/to/deepseek-harness --npm
+pnpm test:plugin-hub --dsh-root /absolute/path/to/deepseek-harness
 ```
 
-`test:browser` uses installed Google Chrome and the sibling DSH Playwright dependency. It starts temporary HTTP services, verifies v1/v2 commands, no-op file counts, deletion, separate npm dependencies and preflight rejection in the same Worker, then compares `tests/expected/browser-lifecycle.json`. Test artifacts and screenshots remain under ignored `.data/`.
+`test:browser` uses installed Google Chrome and the selected DSH checkout’s Playwright dependency. It starts temporary HTTP services, verifies v1/v2 commands, no-op file counts, deletion, separate npm dependencies and preflight rejection in the same Worker, then compares `tests/expected/browser-lifecycle.json`. Test artifacts and screenshots remain under ignored `.data/`.
 
 `test:plugin-hub` first verifies HTTP request fields, progressive response streams and cancellation between a real dedicated Chrome Worker and a page-side provider. It then installs the published `dsh-plugin@2.2.1`, opens its settings UI, and installs through the actual catalog and confirmation buttons. It checks that closing the success dialog keeps the document and Worker alive, pending version records do not retire the settings slot, and the native switch starts enabled with one registration after an off/on cycle. It also exercises the HTTP task queue through virtual subprocesses. An isolated npm registry supplies a command-plugin fixture for add/update/remove and verifies the Worker’s `node:crypto.createHash` result. The actual `dsh-whale-widget@0.4.2` publication is rejected for `node:dns` without activation, while the installed fixture remains usable. Catalog and release metadata requests use the real remote services. It compares `tests/expected/plugin-hub.json` and requires network access.
 
@@ -109,4 +109,10 @@ The same test installs published `dsh-web-mobile@3.2.0` and updates it to `3.2.1
 
 `pnpm test:plugin-hub --host=<reachable-local-IP> --chinese --default-id` exercises a non-localhost HTTP origin, Chinese at startup, and the preview form's default plugin ID. The test checks that the native plugin manager can resolve both installed bundles and that the marketplace survives repeated opening, settings navigation, and mobile-plugin installation while open. Published bundle installs select the package in the native profile bundle list; Forge and the native plugin switch share one Loader entry. Updates remove legacy Forge patch rows and preserve a user-disabled selection. Source plugins without bundle metadata continue to use Forge patch rows. An installed package can be disabled or fail activation; package availability alone does not establish that it is running.
 
-Unit/integration tests use temporary directories and OS-assigned ports. They cover immutable storage and concurrent publication, real Worker lowering, dependency separation, shared host versions, invalid paths and imports, compilation failure cleanup, HTTP downloads/CORS/limits, and admission release after failures. `smoke:npm` explicitly uses the network to install `is-odd@3.0.1` and transitive `is-number@6.0.0`, verifies separate artifacts and executes the resulting dependency mapping locally. The tests expect the sibling DSH runtime's `lib/index.js` to exist.
+Unit/integration tests use temporary directories and OS-assigned ports. They cover immutable storage and concurrent publication, real Worker lowering, dependency separation, shared host versions, invalid paths and imports, compilation failure cleanup, HTTP downloads/CORS/limits, and admission release after failures. `smoke:npm` explicitly uses the network to install `is-odd@3.0.1` and transitive `is-number@6.0.0`, verifies separate artifacts and executes the resulting dependency mapping locally. The tests expect the selected DSH runtime's `lib/index.js` to exist. `test`, `smoke:npm`, `smoke:published`, `preview:prepare`, `test:browser`, and `test:plugin-hub` require `--dsh-root PATH` or the `DSH_ROOT` environment variable; they never infer a sibling checkout. The CLI flag takes precedence over the environment variable.
+
+## Isolated DSH baseline validation
+
+Run baseline validation from a separate Forge worktree and pass the same absolute DSH worktree path to every command. `preview:prepare` replaces `.data/preview` in its own Forge worktree; changing only `--dsh-root` does not change that output directory. Do not run it from an existing deployment’s checkout. Build the selected DSH artifacts first, then run Forge checks, unit tests and npm smokes, prepare its preview, and run Chrome acceptance. Browser acceptance verifies the prepared target’s generation and both package rosters against its freshly packed image before starting services. Use separate listener ports and an explicit `--storage` directory when starting a persistent test server.
+
+A baseline with different Worker/compiler behavior must use its own `FORGE_GENERATION`; an exact package roster alone cannot reject an older plan that imports no host packages. Generate the target from the new image rather than editing old version strings. The rc.2 source baseline provides Cordis 4.0.5, so the existing optional Cordis patch admission remains sufficient for Hub 2.2.1’s exact 4.0.1 declaration. DSH prerelease and Client requirements retain their declared semver checks; no baseline-wide version relaxation is applied. The base release’s lowerer exports are present, but Forge integration, the Client roster and required implemented Node modules must be ported and built before integration tests can pass.

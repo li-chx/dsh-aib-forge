@@ -1,3 +1,4 @@
+import { dshRoot } from './dsh-root.js'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { mkdtemp, mkdir, readdir, writeFile, readFile, rm } from 'node:fs/promises'
@@ -9,7 +10,7 @@ import {
 import type { BuildRequest, BuildTarget, PackageResolver } from '../src/index.js'
 
 const target: BuildTarget = { protocol: 1, generation: 'dsh-worker-1', hostPackages: { '@deepseek-ai/cordis': '4.0.0' } }
-const lowerModule = await loadDshLowerer(resolve('../deepseek-harness/packages/experimental/webworker-runtime/lib/index.js'))
+const lowerModule = await loadDshLowerer(resolve(dshRoot, 'packages/experimental/webworker-runtime/lib/index.js'))
 const request = (source = 'export const name = "fixture"; export const apply = () => "v1"'): BuildRequest => ({ protocol: 1, generation: target.generation, plugin: { id: 'fixture', name: 'fixture', version: '1.0.0', entry: 'src/index.ts', files: { 'src/index.ts': source }, dependencies: {}, peerDependencies: {} } })
 const noDependencies: PackageResolver = { async prepare() {}, async resolve() { throw new Error('Unexpected dependency') } }
 
@@ -336,7 +337,7 @@ test('compiler capabilities follow the actual DSH implemented proxy roster, excl
   const code = new TextDecoder().decode(await store.get(file.objectKey))
   assert.match(code, /require\("node:crypto"\)/)
   // Exercise the compiled plugin with the actual Worker crypto implementation, not Node's crypto.
-  const workerCrypto: Record<string, unknown> = await import(resolve('../deepseek-harness/packages/experimental/webworker-runtime/src/node/builtin_modules/implemented/crypto.ts'))
+  const workerCrypto: Record<string, unknown> = await import(resolve(dshRoot, 'packages/experimental/webworker-runtime/src/node/builtin_modules/implemented/crypto.ts'))
   const module: { exports: Record<string, unknown> } = { exports: {} }
   new Function('module', 'exports', 'require', code)(module, module.exports, (name: string) => { assert.equal(name, 'node:crypto'); return workerCrypto })
   assert.equal(typeof module.exports.apply, 'function')

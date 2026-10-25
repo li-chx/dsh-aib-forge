@@ -1,4 +1,6 @@
 /** Published marketplace acceptance through its real UI, HTTP routes and subprocess install queue. */
+import { resolveDshRoot } from './dsh-path.mjs'
+import { imageTarget } from './image-target.mjs'
 import assert from 'node:assert/strict'
 import { verifyHttpPort } from './verify-http-port.mjs'
 import { verifyMobilePlugin } from './verify-mobile-plugin.mjs'
@@ -19,17 +21,15 @@ const { values } = parseArgs({ options: { 'dsh-root': { type: 'string' }, host: 
 let chinese = values.chinese
 const zhCopy = { Ready: '就绪', Active: '已激活', 'Plugin ID': '插件 ID', 'Install npm package': '安装 npm 包', Close: '关闭', Continue: '继续', 'Get started': '开始使用', 'Add API Key': '添加 API Key', 'Configure later': '稍后配置', 'Account menu': '账号菜单', Settings: '设置', 'Plugin Hub': '插件市场' }
 const copy = text => chinese ? zhCopy[text] ?? text : text
-const dshRoot = resolve(values['dsh-root'] ?? resolve(root, '../deepseek-harness'))
+const dshRoot = resolveDshRoot(values['dsh-root'])
 const { chromium } = await import(pathToFileURL(resolve(dshRoot, 'apps/web/node_modules/playwright/index.mjs')).href)
 const site = resolve(root, '.data/preview/site')
 const target = JSON.parse(await readFile(resolve(root, '.data/preview/target.json'), 'utf8'))
 const { packRepositoryImage } = await import(pathToFileURL(resolve(dshRoot, 'packages/experimental/webworker-packer/lib/index.js')).href)
-const { IMAGE_FILE_NAME } = await import(pathToFileURL(resolve(dshRoot, 'packages/experimental/webworker-runtime/lib/index.js')).href)
+const { IMAGE_FILE_NAME, FORGE_GENERATION } = await import(pathToFileURL(resolve(dshRoot, 'packages/experimental/webworker-runtime/lib/index.js')).href)
 const packed = packRepositoryImage(dshRoot, 'web')
 assert.deepEqual(packed.missing, [])
-const imageManifest = JSON.parse(new TextDecoder().decode(packed.files['config/vfs-manifest.json']))
-assert(imageManifest.clientPackages && Object.keys(imageManifest.clientPackages).length > 0, 'Build the Client package roster before browser acceptance')
-target.clientPackages = imageManifest.clientPackages
+assert.deepEqual(target, imageTarget(packed, FORGE_GENERATION), 'Prepared target differs from selected DSH image; run preview:prepare for this checkout')
 const images = new Map([[`/preview/${IMAGE_FILE_NAME}`, packed.image], ...packed.lazyArchives.map(archive => [`/preview/${archive.name}`, archive.image])])
 const temporary = await mkdtemp(join(tmpdir(), 'dsh-forge-hub-'))
 const fixtureName = 'forge-hub-acceptance-plugin'

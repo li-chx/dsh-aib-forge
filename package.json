@@ -11,12 +11,12 @@
     "dev": "tsx src/main.ts",
     "build": "tsc",
     "start": "node dist/main.js",
-    "test": "tsx --test tests/*.test.ts",
+    "test": "node scripts/run-tests.mjs unit",
     "check": "tsc --noEmit && tsc --noEmit -p tsconfig.tests.json",
-    "smoke:npm": "tsx tests/npm-smoke.ts",
+    "smoke:npm": "node scripts/run-tests.mjs npm",
     "preview:prepare": "node scripts/prepare-preview.mjs",
     "test:browser": "node scripts/verify-browser.mjs",
-    "smoke:published": "tsx tests/published-smoke.ts",
+    "smoke:published": "node scripts/run-tests.mjs published",
     "test:plugin-hub": "node scripts/verify-plugin-hub.mjs"
   },
   "dependencies": {
