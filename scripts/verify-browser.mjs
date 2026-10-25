@@ -12,11 +12,12 @@ import { parseArgs } from 'node:util'
 import { FileArtifactStore, ForgeCompiler, PnpmPackageResolver, createForgeHandler, loadDshLowerer, startForgeServer } from '../dist/index.js'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
-const { values } = parseArgs({ options: { 'dsh-root': { type: 'string' }, npm: { type: 'boolean', default: false }, 'refresh-snapshot': { type: 'boolean', default: false } } })
+const { values } = parseArgs({ options: { 'dsh-root': { type: 'string' }, 'preview-root': { type: 'string' }, npm: { type: 'boolean', default: false }, 'refresh-snapshot': { type: 'boolean', default: false } } })
 const dshRoot = resolveDshRoot(values['dsh-root'])
 const { chromium } = await import(pathToFileURL(resolve(dshRoot, 'apps/web/node_modules/playwright/index.mjs')).href)
-const site = resolve(root, '.data/preview/site')
-const target = JSON.parse(await readFile(resolve(root, '.data/preview/target.json'), 'utf8'))
+const previewRoot = resolve(values['preview-root'] ?? resolve(root, '.data/preview'))
+const site = resolve(previewRoot, 'site')
+const target = JSON.parse(await readFile(resolve(previewRoot, 'target.json'), 'utf8'))
 const { packRepositoryImage } = await import(pathToFileURL(resolve(dshRoot, 'packages/experimental/webworker-packer/lib/index.js')).href)
 const { IMAGE_FILE_NAME, FORGE_GENERATION, forgeSharedPackages } = await import(pathToFileURL(resolve(dshRoot, 'packages/experimental/webworker-runtime/lib/index.js')).href)
 const packed = packRepositoryImage(dshRoot, 'web')
@@ -70,7 +71,7 @@ try {
   page.on('pageerror', error => logs.push(error.message))
   let workers = 0
   page.on('worker', () => { workers++ })
-  await page.goto(`${origin}/preview.html?preview-fixture=none&forge=${encodeURIComponent(backend.url)}`)
+  await page.goto(`${origin}/preview.html?preview-fixture=none&storage=none&forge=${encodeURIComponent(backend.url)}`)
   await page.getByRole('button', { name: 'DSH Forge', exact: true }).click()
   const panel = page.locator('[data-forge-preview]')
   const status = panel.locator('[role="status"]')

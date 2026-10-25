@@ -1,0 +1,35 @@
+{
+  "storage": "IndexedDB",
+  "defaultEnabled": true,
+  "toolbar": {
+    "cssLoaded": true,
+    "normalFlow": true,
+    "narrowViewport": true
+  },
+  "committedReload": {
+    "plugin": true,
+    "client": true,
+    "editedConfiguration": true,
+    "workspace": true,
+    "namedSession": true
+  },
+  "forgeOfflineRestore": true,
+  "disabledSelectionRestored": true,
+  "updateRestored": true,
+  "uninstallRestored": true,
+  "sourceIsolated": true,
+  "staleTab": {
+    "code": "STORAGE_CONFLICT",
+    "visible": true
+  },
+  "abortedTransaction": {
+    "code": "STORAGE_FAILED",
+    "visible": true,
+    "recoveredByReload": true
+  },
+  "corruptedBoot": {
+    "rejected": true,
+    "bytesRetained": true
+  },
+  "coldWorkerStarts": 8
+}

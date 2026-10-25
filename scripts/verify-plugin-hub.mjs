@@ -2,6 +2,7 @@
 import { resolveDshRoot } from './dsh-path.mjs'
 import { imageTarget } from './image-target.mjs'
 import assert from 'node:assert/strict'
+import { persistenceFixtures, preparePersistenceSources, verifyPersistence } from './verify-persistence.mjs'
 import { verifyHttpPort } from './verify-http-port.mjs'
 import { verifyMobilePlugin } from './verify-mobile-plugin.mjs'
 import { verifyExtraPlugins } from './verify-extra-plugins.mjs'
@@ -24,7 +25,7 @@ import { parseArgs } from 'node:util'
 import { FileArtifactStore, ForgeCompiler, PnpmPackageResolver, createForgeHandler, loadDshLowerer, startForgeServer } from '../dist/index.js'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
-const { values } = parseArgs({ options: { 'dsh-root': { type: 'string' }, 'preview-root': { type: 'string' }, host: { type: 'string', default: '127.0.0.1' }, chinese: { type: 'boolean', default: false }, 'default-id': { type: 'boolean', default: false }, 'ui-install': { type: 'boolean', default: true }, 'native-enable': { type: 'boolean', default: true }, 'refresh-snapshot': { type: 'boolean', default: false } } })
+const { values } = parseArgs({ options: { 'dsh-root': { type: 'string' }, 'preview-root': { type: 'string' }, 'persistence-only': { type: 'boolean', default: false }, host: { type: 'string', default: '127.0.0.1' }, chinese: { type: 'boolean', default: false }, 'default-id': { type: 'boolean', default: false }, 'ui-install': { type: 'boolean', default: true }, 'native-enable': { type: 'boolean', default: true }, 'refresh-snapshot': { type: 'boolean', default: false } } })
 let chinese = values.chinese
 const zhCopy = { Ready: '就绪', Active: '已激活', 'Plugin ID': '插件 ID', 'Install npm package': '安装 npm 包', Close: '关闭', Continue: '继续', 'Get started': '开始使用', 'Add API Key': '添加 API Key', 'Configure later': '稍后配置', 'Account menu': '账号菜单', Settings: '设置', 'Plugin Hub': '插件市场' }
 const copy = text => chinese ? zhCopy[text] ?? text : text
@@ -33,13 +34,14 @@ const { chromium } = await import(pathToFileURL(resolve(dshRoot, 'apps/web/node_
 const previewRoot = resolve(values['preview-root'] ?? resolve(root, '.data/preview'))
 const site = resolve(previewRoot, 'site')
 const target = JSON.parse(await readFile(resolve(previewRoot, 'target.json'), 'utf8'))
-const { packRepositoryImage } = await import(pathToFileURL(resolve(dshRoot, 'packages/experimental/webworker-packer/lib/index.js')).href)
+const { packRepositoryImage, packVfsOverlay } = await import(pathToFileURL(resolve(dshRoot, 'packages/experimental/webworker-packer/lib/index.js')).href)
 const { IMAGE_FILE_NAME, FORGE_GENERATION, forgeSharedPackages } = await import(pathToFileURL(resolve(dshRoot, 'packages/experimental/webworker-runtime/lib/index.js')).href)
 const packed = packRepositoryImage(dshRoot, 'web')
 assert.deepEqual(packed.missing, [])
 assert.deepEqual(target, imageTarget(packed, FORGE_GENERATION, forgeSharedPackages), 'Prepared target differs from selected DSH image; run preview:prepare for this checkout')
 const images = new Map([[`/preview/${IMAGE_FILE_NAME}`, packed.image], ...packed.lazyArchives.map(archive => [`/preview/${archive.name}`, archive.image])])
 const temporary = await mkdtemp(join(tmpdir(), 'dsh-forge-hub-'))
+await preparePersistenceSources({ images, temporary, packVfsOverlay })
 const fixtureName = 'forge-hub-acceptance-plugin'
 const fixtureConfig = { label: 'retained', enabled: true, nested: { count: 7, flags: [false, true], empty: null } }
 let registry
@@ -95,6 +97,9 @@ try {
     return response
   }, { hostname: '127.0.0.1', port: 0 })
   browser = await chromium.launch({ channel: 'chrome', headless: true })
+  if (values['persistence-only']) {
+    await verifyPersistence({ browser, origin, backendUrl: backend.url, target, root, refreshSnapshot: values['refresh-snapshot'] })
+  } else {
   const httpPort = await verifyHttpPort(browser, origin, dshRoot)
   console.log('Dedicated Worker HTTP port streaming and cancellation passed')
   const page = await browser.newPage({ locale: chinese ? 'zh-CN' : 'en-US', viewport: { width: 1440, height: 1000 } })
@@ -109,7 +114,7 @@ try {
   let partialVersionObserved = false
   let workers = 0
   page.on('worker', () => { workers++ })
-  await page.goto(`${origin}/preview.html?preview-fixture=none&forge=${encodeURIComponent(backend.url)}`)
+  await page.goto(`${origin}/preview.html?preview-fixture=none&storage=none&forge=${encodeURIComponent(backend.url)}`)
   await page.getByRole('button', { name: 'DSH Forge', exact: true }).click()
   const panel = page.locator('[data-forge-preview]')
   const status = panel.locator('[role="status"]')
@@ -386,6 +391,7 @@ try {
     assert.equal(envelope.result?.ok, true, JSON.stringify(envelope))
     return envelope.result.value
   }
+  }
 } catch (error) {
   if (browser) {
     for (const context of browser.contexts()) for (const page of context.pages()) {
@@ -442,7 +448,7 @@ async function startRegistry() {
   await tar.c({ cwd: directory, file: tarballPath, gzip: true }, ['package'])
   const tarball = await readFile(tarballPath)
   const fixturePackages = new Map()
-  for (const fixture of [...overrideFixtures(fixtureName), ...dnsFixtures(), ...v8Fixtures(), ...dependencyFixtures(target), ...runtimeLoadingFixtures(target)]) {
+  for (const fixture of [...persistenceFixtures(), ...overrideFixtures(fixtureName), ...dnsFixtures(), ...v8Fixtures(), ...dependencyFixtures(target), ...runtimeLoadingFixtures(target)]) {
     const folder = join(temporary, `${fixture.manifest.name}-${fixture.manifest.version}`)
     await mkdir(join(folder, 'package'), { recursive: true })
     await writeFile(join(folder, 'package/package.json'), JSON.stringify(fixture.manifest))
