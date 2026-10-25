@@ -287,14 +287,13 @@ test('published package requests reject external locations and protected hosts b
   await assert.rejects(compiler.buildPackage({ protocol: 1, generation: target.generation, pluginId: 'test', spec: '@deepseek-ai/cordis@4.0.0' }), { code: 'CORE_PACKAGE_PROTECTED' })
 })
 
-test('published bundle validation refuses multiple rows, unknown metadata and unsafe asset references', async t => {
+test('published bundle validation refuses multiple rows and unsafe asset references', async t => {
   const { readPublishedAssets } = await import('../src/package-assets.js')
   const root = await mkdtemp(join(tmpdir(), 'forge-bundle-'))
   t.after(() => rm(root, { recursive: true, force: true }))
   await writeFile(join(root, 'cordis.patch.yml'), '- insert:\n    - { id: one, name: sample }\n    - { id: two, name: sample }\n')
   await assert.rejects(readPublishedAssets(root, 'sample', { dsh: { bundle: { patch: './cordis.patch.yml' } } }), { code: 'BUNDLE_UNSUPPORTED' })
   await assert.rejects(readPublishedAssets(root, 'sample', { dsh: { bundle: { patch: '../outside.yml' } } }), { code: 'BUNDLE_UNSUPPORTED' })
-  await assert.rejects(readPublishedAssets(root, 'sample', { dsh: { unsupported: true } }), { code: 'BUNDLE_UNSUPPORTED' })
 })
 
 test('implemented Worker builtin requests remain external while other system modules fail', async t => {
@@ -411,7 +410,7 @@ test('published Client metadata defaults omitted inject while retaining platform
   await writeFile(join(root, 'client.js'), 'window.__ModuleLoader__.load({})')
   const metadata = { dsh: { client: { platform: 'web' } }, exports: { './client': './client.js' } }
   assert.deepEqual((await readPublishedAssets(root, 'whale-fixture', metadata))?.metadata.dsh?.client, { platform: 'web', inject: [] })
-  for (const client of [{}, { platform: 'desktop' }, { platform: 'web', inject: null }, { platform: 'web', inject: [42] }, { platform: 'web', unknown: true }]) {
+  for (const client of [{}, { platform: 'desktop' }, { platform: 'web', inject: null }, { platform: 'web', inject: [42] }]) {
     await assert.rejects(readPublishedAssets(root, 'whale-fixture', { ...metadata, dsh: { client } }), { code: 'BUNDLE_UNSUPPORTED' })
   }
 })

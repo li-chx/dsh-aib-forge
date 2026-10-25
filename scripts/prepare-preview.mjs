@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
 
 const forgeRoot = fileURLToPath(new URL('..', import.meta.url))
-const { values } = parseArgs({ options: { 'dsh-root': { type: 'string' } } })
+const { values } = parseArgs({ options: { 'dsh-root': { type: 'string' }, 'out-dir': { type: 'string' } } })
 const dshRoot = resolveDshRoot(values['dsh-root'])
 const runtimePath = resolve(dshRoot, 'packages/experimental/webworker-runtime/lib')
 const { packRepositoryImage } = await import(pathToFileURL(resolve(dshRoot, 'packages/experimental/webworker-packer/lib/index.js')).href)
@@ -15,7 +15,7 @@ const { FORGE_GENERATION, IMAGE_FILE_NAME } = await import(pathToFileURL(resolve
 const packed = packRepositoryImage(dshRoot, 'web')
 if (packed.missing.length) throw new Error(`Incomplete image: ${packed.missing.join(', ')}`)
 const target = imageTarget(packed, FORGE_GENERATION)
-const previewRoot = resolve(forgeRoot, '.data/preview')
+const previewRoot = resolve(values['out-dir'] ?? resolve(forgeRoot, '.data/preview'))
 const site = resolve(previewRoot, 'site')
 await rm(previewRoot, { recursive: true, force: true })
 await mkdir(previewRoot, { recursive: true })

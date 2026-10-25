@@ -17,14 +17,15 @@ import { parseArgs } from 'node:util'
 import { FileArtifactStore, ForgeCompiler, PnpmPackageResolver, createForgeHandler, loadDshLowerer, startForgeServer } from '../dist/index.js'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
-const { values } = parseArgs({ options: { 'dsh-root': { type: 'string' }, host: { type: 'string', default: '127.0.0.1' }, chinese: { type: 'boolean', default: false }, 'default-id': { type: 'boolean', default: false }, 'ui-install': { type: 'boolean', default: true }, 'native-enable': { type: 'boolean', default: true }, 'refresh-snapshot': { type: 'boolean', default: false } } })
+const { values } = parseArgs({ options: { 'dsh-root': { type: 'string' }, 'preview-root': { type: 'string' }, host: { type: 'string', default: '127.0.0.1' }, chinese: { type: 'boolean', default: false }, 'default-id': { type: 'boolean', default: false }, 'ui-install': { type: 'boolean', default: true }, 'native-enable': { type: 'boolean', default: true }, 'refresh-snapshot': { type: 'boolean', default: false } } })
 let chinese = values.chinese
 const zhCopy = { Ready: '就绪', Active: '已激活', 'Plugin ID': '插件 ID', 'Install npm package': '安装 npm 包', Close: '关闭', Continue: '继续', 'Get started': '开始使用', 'Add API Key': '添加 API Key', 'Configure later': '稍后配置', 'Account menu': '账号菜单', Settings: '设置', 'Plugin Hub': '插件市场' }
 const copy = text => chinese ? zhCopy[text] ?? text : text
 const dshRoot = resolveDshRoot(values['dsh-root'])
 const { chromium } = await import(pathToFileURL(resolve(dshRoot, 'apps/web/node_modules/playwright/index.mjs')).href)
-const site = resolve(root, '.data/preview/site')
-const target = JSON.parse(await readFile(resolve(root, '.data/preview/target.json'), 'utf8'))
+const previewRoot = resolve(values['preview-root'] ?? resolve(root, '.data/preview'))
+const site = resolve(previewRoot, 'site')
+const target = JSON.parse(await readFile(resolve(previewRoot, 'target.json'), 'utf8'))
 const { packRepositoryImage } = await import(pathToFileURL(resolve(dshRoot, 'packages/experimental/webworker-packer/lib/index.js')).href)
 const { IMAGE_FILE_NAME, FORGE_GENERATION } = await import(pathToFileURL(resolve(dshRoot, 'packages/experimental/webworker-runtime/lib/index.js')).href)
 const packed = packRepositoryImage(dshRoot, 'web')
@@ -33,6 +34,7 @@ assert.deepEqual(target, imageTarget(packed, FORGE_GENERATION), 'Prepared target
 const images = new Map([[`/preview/${IMAGE_FILE_NAME}`, packed.image], ...packed.lazyArchives.map(archive => [`/preview/${archive.name}`, archive.image])])
 const temporary = await mkdtemp(join(tmpdir(), 'dsh-forge-hub-'))
 const fixtureName = 'forge-hub-acceptance-plugin'
+const fixtureConfig = { label: 'retained', enabled: true, nested: { count: 7, flags: [false, true], empty: null } }
 let registry
 const logs = []
 const frontend = createServer((request, response) => {
@@ -242,14 +244,17 @@ try {
   assert.equal((await command()).result.text, 'hub child active')
   const digest = await rpc('commands/execute', { agentId: session.sessionId, line: '/forge-hub-sha256', submittedAttachments: [] })
   assert.equal(digest.result.text, createHash('sha256').update('forge hub').digest('hex'))
-  console.log('Hub fixture installed and command active')
+  const configCommand = () => rpc('commands/execute', { agentId: session.sessionId, line: '/forge-hub-config', submittedAttachments: [] })
+  assert.deepEqual(JSON.parse((await configCommand()).result.text), fixtureConfig)
+  console.log('Hub fixture installed with annotation metadata and retained nested configuration')
   const updating = await hub('/install', { repo: fixtureName, source: 'custom', installChannel: 'npm', lang: 'en', mode: 'update' })
   const updateTask = await waitTask(updating.task)
   assert.equal(updateTask.status, 'done', JSON.stringify(updateTask))
   assert.equal((await command()).result.text, 'hub child active')
   const loaderEntries = await hub('/debug/loader-entries')
   assert.equal(loaderEntries.entries.filter(entry => entry.name === fixtureName).length, 1)
-  console.log('Hub fixture updated through @latest')
+  assert.deepEqual(JSON.parse((await configCommand()).result.text), fixtureConfig)
+  console.log('Hub fixture updated through @latest with configuration retained')
   const whaleCreated = await hub('/install', { repo: 'dsh-whale-widget', source: 'custom', installChannel: 'npm', lang: 'en', version: '0.4.2' })
   assert.equal(whaleCreated.ok, true)
   const whaleTask = await waitTask(whaleCreated.task)
@@ -278,7 +283,7 @@ try {
     catalogThroughCurl: true, catalogListVisible: true, releaseAgeThroughHttps: true,
     marketplaceReopened: true, nativeManagerPackagesAvailable: true, marketplacePreservedAfterPluginInstall: true,
     marketplaceUiInstall: true, nativeToggleSingleRegistration: true,
-    installQueue: { package: `${fixtureName}@1.0.0`, status: installTask.status, command: 'hub child active', sha256: digest.result.text },
+    installQueue: { package: `${fixtureName}@1.0.0`, status: installTask.status, command: 'hub child active', sha256: digest.result.text, configuration: fixtureConfig, annotationMetadataAccepted: true },
     whale: { package: 'dsh-whale-widget@0.4.2', status: whaleTask.status, code: whaleBuildFailure.body.error.code, module: 'node:dns', activated: false },
     updateQueue: { status: updateTask.status, singleLoaderEntry: true },
     removeQueue: { status: removeTask.status, commandRemoved: true }, workerStarts: workers, documentPreserved: true,
@@ -373,12 +378,13 @@ async function startRegistry() {
   const directory = join(temporary, 'npm-fixture')
   await mkdir(join(directory, 'package'), { recursive: true })
   const fixture = { name: fixtureName, version: '1.0.0', main: 'index.js',
-    dsh: { bundle: { patch: './cordis.patch.yml' } },
+    dsh: { bundle: { patch: './cordis.patch.yml' }, compatibility: { dshReleases: { '0.2.1-rc.2': 'compatible' } }, manifestVersion: 1 },
   }
   await writeFile(join(directory, 'package/package.json'), JSON.stringify(fixture))
-  await writeFile(join(directory, 'package/cordis.patch.yml'), `- insert:\n    - id: ${fixtureName}\n      name: ${fixtureName}\n`)
-  await writeFile(join(directory, 'package/index.js'), `const { createHash } = require('node:crypto'); exports.name = '${fixtureName}'; exports.inject = ['commands']; exports.apply = ctx => {
+  await writeFile(join(directory, 'package/cordis.patch.yml'), `- insert:\n    - id: ${fixtureName}\n      name: ${fixtureName}\n      config: ${JSON.stringify(fixtureConfig)}\n`)
+  await writeFile(join(directory, 'package/index.js'), `const { createHash } = require('node:crypto'); exports.name = '${fixtureName}'; exports.inject = ['commands']; exports.apply = (ctx, config) => {
     ctx.effect(() => ctx.commands.register({ name: 'forge-hub-child', description: 'Forge acceptance command', handler: () => ({ kind: 'success', text: 'hub child active' }) }));
+    ctx.effect(() => ctx.commands.register({ name: 'forge-hub-config', description: 'Forge configuration acceptance command', handler: () => ({ kind: 'success', text: JSON.stringify(config) }) }));
     ctx.effect(() => ctx.commands.register({ name: 'forge-hub-sha256', description: 'Forge SHA-256 acceptance command', handler: () => ({ kind: 'success', text: createHash('sha256').update('forge hub').digest('hex') }) }));
   };\n`)
   const require = createRequire(resolve(dshRoot, 'package.json'))

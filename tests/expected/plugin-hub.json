@@ -56,7 +56,20 @@
     "package": "forge-hub-acceptance-plugin@1.0.0",
     "status": "done",
     "command": "hub child active",
-    "sha256": "1586b8f9fcfa5ccb675e507ea82c8226cd00fe693d1f6908f5aab8c3f18beb97"
+    "sha256": "1586b8f9fcfa5ccb675e507ea82c8226cd00fe693d1f6908f5aab8c3f18beb97",
+    "configuration": {
+      "label": "retained",
+      "enabled": true,
+      "nested": {
+        "count": 7,
+        "flags": [
+          false,
+          true
+        ],
+        "empty": null
+      }
+    },
+    "annotationMetadataAccepted": true
   },
   "whale": {
     "package": "dsh-whale-widget@0.4.2",
