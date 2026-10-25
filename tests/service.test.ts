@@ -466,3 +466,30 @@ test('optional DNS imports compile while actual unavailable calls fail and guard
   const result = await compiler.build(request('export const apply = () => require("node:dns/promises")'))
   assert.equal(result.packages.length, 1)
 })
+
+
+test('optional v8 imports preserve guarded heap checks without fabricating statistics', async t => {
+  const { compiler, store } = await setup(t)
+  assert.ok(lowerModule.importableBuiltins?.includes('node:v8'))
+  const v8: Record<string, unknown> = await import(resolve(dshRoot, 'packages/experimental/webworker-runtime/src/node/builtin_modules/optional/v8.ts'))
+  for (const specifier of ['node:v8', 'v8']) {
+    const manifest = await compiler.build(request(`import { getHeapStatistics } from "${specifier}";
+      export const unguarded = () => getHeapStatistics();
+      export const admit = () => {
+        try {
+          const { used_heap_size: used, heap_size_limit: limit } = getHeapStatistics();
+          return !Number.isFinite(used) || !Number.isFinite(limit) || limit <= 0 || used < limit * (2 / 3);
+        } catch { return true }
+      };`))
+    const pkg = manifest.packages.find(pkg => pkg.id === manifest.plugin.packageId)!
+    const file = pkg.files.find(file => file.path === pkg.entry)!
+    const code = new TextDecoder().decode(await store.get(file.objectKey))
+    assert.match(code, /require\("node:v8"\)/)
+    const module: { exports: Record<string, unknown> } = { exports: {} }
+    new Function('module', 'exports', 'require', code)(module, module.exports, (name: string) => { assert.equal(name, 'node:v8'); return v8 })
+    const { unguarded, admit } = module.exports
+    if (typeof unguarded !== 'function' || typeof admit !== 'function') throw new Error('Missing heap admission fixtures')
+    assert.throws(() => unguarded(), { code: 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM' })
+    assert.equal(admit(), true, 'The plugin fallback admits work without claiming memory measurements')
+  }
+})

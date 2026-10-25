@@ -8,6 +8,8 @@ import { verifyExtraPlugins } from './verify-extra-plugins.mjs'
 import { verifyIndustryPlugin } from './verify-industry-plugin.mjs'
 import { overrideFixtures, verifyBundleOverrides } from './verify-bundle-overrides.mjs'
 import { dnsFixtures, unsupportedNetName, verifyOptionalDns } from './verify-optional-dns.mjs'
+import { v8Fixtures, verifyOptionalV8 } from './verify-optional-v8.mjs'
+import { verifyContextPlugin } from './verify-context-plugin.mjs'
 import { once } from 'node:events'
 import { createServer } from 'node:http'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -260,6 +262,7 @@ try {
   assert.equal(loaderEntries.entries.filter(entry => entry.name === fixtureName).length, 1)
   assert.deepEqual(JSON.parse((await configCommand()).result.text), fixtureConfig)
   console.log('Hub fixture updated through @latest with configuration retained')
+  const optionalV8 = await verifyOptionalV8({ page, hub, waitTask, rpc, session })
   const optionalDns = await verifyOptionalDns({ page, hub, waitTask, rpc, session, netBuildFailure: () => netBuildFailure })
   const whaleCreated = await hub('/install', { repo: 'dsh-whale-widget', source: 'custom', installChannel: 'npm', lang: 'en', version: '0.4.2' })
   assert.equal(whaleCreated.ok, true)
@@ -286,6 +289,7 @@ try {
   console.log('Whale DNS import passed; legacy widget did not render; existing command preserved')
   const bundleOverrides = await verifyBundleOverrides({ page, hub, waitTask, rpc, session, fixtureConfig, fixtureName })
   const industry = await verifyIndustryPlugin({ page, hub, waitTask, rpc, session })
+  const contextPlugin = await verifyContextPlugin({ page, hub, waitTask, rpc, session, root })
   const removing = await hub('/uninstall', { name: fixtureName })
   const removeTask = await waitTask(removing.task)
   assert.equal(removeTask.status, 'done', JSON.stringify(removeTask))
@@ -297,7 +301,7 @@ try {
   assert.equal(workers, 1)
   assert.equal(await page.evaluate(() => performance.timeOrigin), timeOrigin)
   const observed = {
-    httpPort, mobile, industry, bundleOverrides, optionalDns, ...extra, package: 'dsh-plugin@2.2.1', hostRoutes: true, clientFactory: true, settingsSection: true,
+    httpPort, mobile, industry, bundleOverrides, optionalDns, optionalV8, contextPlugin, ...extra, package: 'dsh-plugin@2.2.1', hostRoutes: true, clientFactory: true, settingsSection: true,
     catalogThroughCurl: true, catalogListVisible: true, releaseAgeThroughHttps: true,
     marketplaceReopened: true, nativeManagerPackagesAvailable: true, marketplacePreservedAfterPluginInstall: true,
     marketplaceUiInstall: true, nativeToggleSingleRegistration: true,
@@ -427,7 +431,7 @@ async function startRegistry() {
   await tar.c({ cwd: directory, file: tarballPath, gzip: true }, ['package'])
   const tarball = await readFile(tarballPath)
   const fixturePackages = new Map()
-  for (const fixture of [...overrideFixtures(fixtureName), ...dnsFixtures()]) {
+  for (const fixture of [...overrideFixtures(fixtureName), ...dnsFixtures(), ...v8Fixtures()]) {
     const folder = join(temporary, `${fixture.manifest.name}-${fixture.manifest.version}`)
     await mkdir(join(folder, 'package'), { recursive: true })
     await writeFile(join(folder, 'package/package.json'), JSON.stringify(fixture.manifest))

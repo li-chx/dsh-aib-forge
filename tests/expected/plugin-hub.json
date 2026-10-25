@@ -76,6 +76,29 @@
     "unsupportedNetCode": "NODE_MODULE_UNSUPPORTED",
     "removed": true
   },
+  "optionalV8": {
+    "imported": true,
+    "caughtCall": {
+      "code": "ERR_FEATURE_UNAVAILABLE_ON_PLATFORM",
+      "message": "web-preview: node:v8.getHeapStatistics is not available in the worker host"
+    },
+    "fallbackCommandExecuted": true,
+    "uncaughtStatus": "activation-failed",
+    "existingPluginPreserved": true,
+    "removed": true
+  },
+  "contextPlugin": {
+    "package": "dsh-context@0.76.0",
+    "hostDetail": true,
+    "clientDashboard": true,
+    "updates": 1,
+    "singleRegistration": true,
+    "removedHostRoute": true,
+    "removedDashboard": true,
+    "residualStyles": 0,
+    "marketplacePreserved": true,
+    "modelRequest": false
+  },
   "router": {
     "package": "@ljwei-stak/dsh-model-router@0.25.1",
     "hostCommand": true,
