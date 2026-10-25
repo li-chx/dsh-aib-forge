@@ -49,24 +49,25 @@ Forge 是 DSH 专用的插件构建与分发服务。前端发起插件安装、
   "protocol": 1,
   "generation": "dsh-worker-1",
   "revision": "<sha256>",
-  "plugin": { "id": "greeting", "name": "local-greeting", "version": "0.0.1", "packageId": "<package-id>", "entry": "index.js" },
+  "plugin": { "id": "greeting", "name": "local-greeting", "version": "0.0.1", "packageId": "<package-id>", "entry": "src/index.ts" },
   "hostPackages": {},
   "packages": [
     {
       "id": "<package-id>",
       "name": "local-greeting",
       "version": "0.0.1",
-      "entry": "index.js",
+      "entry": "src/index.ts",
       "dependencies": {},
-      "files": [{ "path": "index.js", "sha256": "<sha256>", "size": 100, "objectKey": "dsh-worker-1/objects/<sha256>" }]
+      "hostDependencies": [],
+      "files": [{ "path": "src/index.ts", "sha256": "<sha256>", "size": 100, "objectKey": "dsh-worker-1/objects/<sha256>" }]
     }
   ]
 }
 ```
 
-`packages[].dependencies` 将引用的包名映射到此清单中的 package id。宿主包引用保留裸包名，并必须出现在 Manifest.hostPackages 中，值为准确版本。仅由 Client 提供的 peer 依赖单独记入 Manifest.clientPackages，按声明版本验证，不能由 Host 代码 import/require；根插件不能替换两个名册中的同名包；固定共享包不允许重映射。普通 dependencies 始终按隔离安装树解析私有实例，即使宿主版本满足范围也不复用，因为库存没有该宿主实例的 peer 绑定信息。同内容、同依赖身份仍可复用产物。外部依赖不能被内联进插件包；允许包内模块打包。首版明确拒绝动态引用、子路径导出、未支持的原生模块、安装脚本依赖，以及 require 消费者依赖不同于统一 import 入口的 CommonJS 实现，并报告具体原因。包入口统一选择 browser/import 条件导出；旧式声明按 browser、module、main 顺序选择，ES import 消费者可以使用双入口包。
+`packages[].dependencies` 将引用的包名映射到此清单中的 package id。宿主包引用必须出现在本包的 hostDependencies 数组及 Manifest.hostPackages 中，后者记录准确版本。全局版本集合不向每个包授予所有宿主依赖；本包 hostDependencies 和 entry 一起纳入包身份。仅由 Client 提供的 peer 依赖单独记入 Manifest.clientPackages，按声明版本验证，不能由 Host 代码 import/require；根插件不能替换两个名册中的同名包；固定共享包不允许重映射。普通 dependencies 始终按隔离安装树解析私有实例，即使宿主版本满足范围也不复用，因为库存没有该宿主实例的 peer 绑定信息。同内容、同依赖身份仍可复用产物。运行时模块逐文件转换，不内联包内相对模块或外部依赖。所有声明的普通依赖与可提供的 peer 都预先准备，包括只有计算 require/import 才会使用的包。require 别名、动态参数、resolve、子路径和 import() 交给 Worker 执行；编译阶段不再用 AST 白名单识别包装器。包内模块循环由模块缓存处理，跨包依赖循环因内容身份递归仍明确拒绝。exports 保留安全递归条件、数组、null 和子路径通配，Worker 使用 browser/require/import/default 固定条件集合按声明顺序选择，不提供 Node 的 import/require 双条件分离。
 
-peerDependencies 与 dependencies 分别验证，同名声明必须同时满足同一供应实例。target peer 必须符合宿主或页面提供的准确版本，不通过自动安装副本消除冲突。非 target peer 只使用消费者安装树中已经存在的供应者，缺失报 PEER_MISSING；未被 Host 导入且没有同名必需 dependency 的 optional peer 可以缺失；安装树已提供的 optional peer 仍须满足声明范围。target 已提供的 optional peer 仍校验版本并记入清单，包括预构建 Client 使用的页面依赖。消费者已提供同名私有依赖时，下游不能偷偷将该 peer 改绑宿主，当前明确报 PEER_CONTEXT_UNSUPPORTED，不实现完整 peer 上下文合成。Client 预构建产物仍使用页面全局模块表，Worker 的包级私有映射不等于 Client 外部依赖映射；固定 seed 校验及 client.external 不支持规则保持不变。
+peerDependencies 与 dependencies 分别验证，同名声明必须同时满足同一供应实例。target peer 必须符合宿主或页面提供的准确版本，不通过自动安装副本消除冲突。非 target peer 只使用消费者安装树中已经存在的供应者，缺失报 PEER_MISSING；没有同名必需 dependency 的 optional peer 可以缺失，实际加载失败由运行时代码捕获；安装树已提供的 optional peer 仍须满足声明范围。target 已提供的 optional peer 仍校验版本并记入清单，包括预构建 Client 使用的页面依赖。消费者已提供同名私有依赖时，下游不能偷偷将该 peer 改绑宿主，当前明确报 PEER_CONTEXT_UNSUPPORTED，不实现完整 peer 上下文合成。Client 预构建产物仍使用页面全局模块表，Worker 的包级私有映射不等于 Client 外部依赖映射；固定 seed 校验及 client.external 不支持规则保持不变。
 
 `GET /v1/artifacts/<objectKey>` 返回字节。objectKey 必须来自清单，严格验证路径和哈希。后端不得读取或发布请求指定的任意本机文件。服务端默认回环监听；允许的前端 Origin 由配置明确指定。
 
@@ -84,7 +85,7 @@ peerDependencies 与 dependencies 分别验证，同名声明必须同时满足�
 
 dsh-plugin@2.2.1 的 Client 有显式版本兼容修复：安装队列先写入仅含 npmPackage 的记录，版本同步完成前 UI 比较 undefined 会导致设置槽位崩溃。Forge 仅在该版本的已知函数及唯一比较语句匹配时添加版本存在检查，缺省版本暂不比较，完整记录沿用原逻辑。目标不匹配时返回 CLIENT_COMPATIBILITY_MISMATCH；成功安装、更新及卸载已完成 Worker 和 Client 热加载，因此移除这些成功路径的自动整页刷新，并调整中英文提示；保留主动重启后的刷新及失败重试。补丁逐个验证目标语句数量，其他包和版本不变，修改后的字节生成独立内容哈希及 revision。
 
-外部 Node 模块能力直接取自同一 DSH lowerer 构建导出的 `MODULE_PROXIES`：仅 `node:` 名称且路径归类为 `builtin_modules/implemented/` 或 `builtin_modules/optional/` 的模块可被编译器保留为外部引用，无前缀的等价引用会规范化。optional 模块允许插件导入后自行捕获不支持的操作；例如 DNS 配置、查询和 V8 堆统计调用会抛出 `ERR_FEATURE_UNAVAILABLE_ON_PLATFORM`。`dsh-context@0.76.0` 自身捕获堆统计错误后允许队列任务继续，因此仍保留串行队列，但没有基于堆使用量的回填保护；Worker 不返回虚构的内存统计。mock 分类和缺失模块仍拒绝；可导入模块中的具体操作仍受 Worker 限制，不等同于完整 Node API。此方式复用已有 crypto 等实现，不维护第二份六模块白名单，也不修改 target 协议或放宽宿主包版本校验；运行时模块清单变化通过前端构建代际区分。
+Node 模块能力由运行中的 Worker 决定，后端只使用同一构建的 lowerModuleSource 转换代码，不维护静态模块引用准入表。缺失 namespace 或不支持的操作在实际 resolve/调用时失败，不用成功 stub 替代。可选 DNS、V8 操作仍抛平台不可用错误；插件可自行捕获降级。发布成功不等于所有功能可执行，固定共享包版本与代际保护不变。
 
 ## 前端应用与模块身份
 
@@ -110,4 +111,4 @@ dsh-plugin@2.2.1 的 Client 有显式版本兼容修复：安装队列先写入�
 
 Worker 路由使用现有页面隧道：`GET /__forge/target` 和 `GET /__forge/installed` 读取目标与状态，`POST /__forge/install` 接收 `{manifest, baseUrl}`，`POST /__forge/remove` 接收 `{pluginId}`。正常应用响应区分 `active`、`disabled`、`removed`、`activation-failed`，并返回下载/写入计数和观察者错误。预检错误返回非 2xx；激活失败通过结果字段报告。
 
-Forge 打包保留外部 ESM import，再由 Worker lowerer 处理默认导入，避免 Node .mjs 互操作规则重复包装 ESM namespace。原 CommonJS 入口恢复其 module.exports 原值；源文件的静态引用校验在打包前执行。
+Forge 保留每个模块的原始路径和扩展，独立剥除 TS/JSX 语法并经 Worker lowerer 转换。CommonJS 保留 module.exports 原值；计算模块请求在运行时执行。声明文件、map、native addon 和 node_modules 不复制；资源预算同时约束源字节和最终转换产物。

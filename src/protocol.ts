@@ -27,7 +27,7 @@ export interface BuildTarget { protocol: 1; generation: string; sharedPackages: 
 /** One immutable artifact, addressed by its bytes. */
 export interface ArtifactFile { path: string; sha256: string; size: number; objectKey: string }
 /** One package instance and its exact runtime dependency mapping. */
-export interface PackageArtifact { id: string; name: string; version: string; entry: string; dependencies: Record<string, string>; files: ArtifactFile[]; metadata?: PackageMetadata }
+export interface PackageArtifact { id: string; name: string; version: string; entry: string; dependencies: Record<string, string>; hostDependencies: string[]; files: ArtifactFile[]; metadata?: PackageMetadata }
 /** Complete installable plugin result; clients derive their own increment. */
 export interface BuildManifest {
   protocol: 1; generation: string; revision: string;
@@ -65,9 +65,12 @@ export function parsePackageBuildRequest(value: unknown): PackageBuildRequest {
   if (!parsed.success) throw new ForgeError('INVALID_REQUEST', parsed.error.message)
   return parsed.data
 }
+/** Recursive Node-style package export declarations; conditions use the Worker resolver’s fixed active set. */
+export type PackageExports = string | null | PackageExports[] | { [key: string]: PackageExports }
+
 /** Sanitized published metadata copied into the frontend's generated package.json. */
 export interface PackageMetadata {
   repository?: string | { url: string }
   dsh?: { bundle?: { patch: string }; client?: { inject: string[]; platform: 'web' } }
-  exports?: Record<string, string>
+  exports?: PackageExports
 }

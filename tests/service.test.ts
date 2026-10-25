@@ -84,7 +84,7 @@ test('host requirements use exact shared versions and cannot replace the core', 
   await assert.rejects(compiler.build(input), { code: 'CORE_PACKAGE_PROTECTED' })
 })
 
-test('invalid generation, paths, compiler failures, native and computed imports fail without leaving workspace files', async t => {
+test('invalid generation, unsafe source paths and syntax fail without leaving workspace files', async t => {
   const { compiler, work } = await setup(t)
   const wrongGeneration = request(); wrongGeneration.generation = 'other'
   await assert.rejects(compiler.build(wrongGeneration), { code: 'GENERATION_MISMATCH' })
@@ -92,11 +92,6 @@ test('invalid generation, paths, compiler failures, native and computed imports 
   assert.throws(() => parseBuildRequest(traversal), { code: 'INVALID_REQUEST' })
   for (const [source, code] of [
     ['export function broken(', 'COMPILE_FAILED'],
-    ['const net = require("node:net"); exports.apply = () => net', 'NODE_MODULE_UNSUPPORTED'],
-    ['export const apply = name => require(name)', 'DYNAMIC_IMPORT_UNSUPPORTED'],
-    ['const load = require; export const apply = name => load(name)', 'DYNAMIC_IMPORT_UNSUPPORTED'],
-    ['export { x } from "dependency/subpath"', 'PACKAGE_SUBPATH_UNSUPPORTED'],
-    ['export { x } from "undeclared"', 'UNDECLARED_DEPENDENCY'],
   ]) await assert.rejects(compiler.build(request(source)), { code })
   assert.deepEqual(await readdir(work), [])
 })
@@ -158,7 +153,7 @@ test('equivalent package instances in different installation directories share o
   assert.equal(manifest.packages.find(pkg => pkg.name === 'left')?.dependencies.leaf, manifest.packages.find(pkg => pkg.name === 'right')?.dependencies.leaf)
 })
 
-test('fixed import entries support dual packages while incompatible CommonJS consumers fail explicitly', async t => {
+test('published conditional exports and both module files are preserved for runtime resolution', async t => {
   const root = await mkdtemp(join(tmpdir(), 'forge-conditional-'))
   t.after(() => rm(root, { recursive: true, force: true }))
   const pkg = join(root, 'node_modules', 'dual'); await mkdir(pkg, { recursive: true })
@@ -173,18 +168,16 @@ test('fixed import entries support dual packages while incompatible CommonJS con
     await writeFile(join(pkg, 'package.json'), JSON.stringify({ name: 'dual', version: '1.0.0', ...entry }))
     const dual = await resolver.resolve('dual', root, root)
     assert.equal(dual.entry, join(pkg, 'esm.js'))
-    assert.equal(dual.requireCompatible, false)
     const { compiler } = await setup(t, { async prepare() {}, async resolve() { return dual } })
     const input = request('import value from "dual"; export const apply = value')
     input.plugin.dependencies = { dual: '1.0.0' }
     assert.equal((await compiler.build(input)).packages.length, 2)
     input.plugin.files['src/index.ts'] = 'import value from "dual"; export const apply = value; export const raw = require("dual")'
-    await assert.rejects(compiler.build(input), { code: 'PACKAGE_ENTRY_UNSUPPORTED' })
+    assert.equal((await compiler.build(input)).packages.length, 2)
   }
   await writeFile(join(pkg, 'package.json'), JSON.stringify({ name: 'dual', version: '1.0.0', exports: { import: './cjs.cjs', require: './cjs.cjs' } }))
   const shared = await resolver.resolve('dual', root, root)
   assert.equal(shared.entry, join(pkg, 'cjs.cjs'))
-  assert.equal(shared.requireCompatible, true)
   await writeFile(join(pkg, 'package.json'), JSON.stringify({ name: 'dual', version: '1.0.0', browser: './esm.js', module: './esm.js', main: './cjs.cjs' }))
   assert.equal((await resolver.resolve('dual', root, root)).entry, join(pkg, 'esm.js'))
   await writeFile(join(pkg, 'package.json'), JSON.stringify({ name: 'dual', version: '1.0.0', exports: { import: '../outside.js', require: './cjs.cjs' } }))
@@ -263,7 +256,7 @@ test('published package HTTP builds preserve the bundle patch and Client bytes w
   const manifest = await result.json()
   const pkg = manifest.packages[0]
   assert.equal(manifest.plugin.id, 'my-plugin'); assert.equal(pkg.entry, 'lib/index.js')
-  assert.deepEqual(pkg.metadata, { repository: { url: 'git+https://example.test/published.git' }, dsh: { bundle: { patch: './cordis.patch.yml' }, client: { inject: ['@deepseek-ai/dsh-client-locale'], platform: 'web' } }, exports: { '.': './lib/index.js', './package.json': './package.json', './cordis.patch.yml': './cordis.patch.yml', './client': './client/client.js' } })
+  assert.deepEqual(pkg.metadata, { repository: { url: 'git+https://example.test/published.git' }, dsh: { bundle: { patch: './cordis.patch.yml' }, client: { inject: ['@deepseek-ai/dsh-client-locale'], platform: 'web' } }, exports: { '.': { types: './types.d.ts', default: './lib/index.js' }, './package.json': './package.json', './cordis.patch.yml': './cordis.patch.yml', './client': './client/client.js' } })
   assert.deepEqual(pkg.files.map((file: { path: string }) => file.path), ['client/client.js', 'cordis.patch.yml', 'lib/index.js'])
   for (const [path, expected] of [['client/client.js', client], ['cordis.patch.yml', patch]]) {
     const file = pkg.files.find((file: { path: string }) => file.path === path)
@@ -296,7 +289,7 @@ test('published bundle validation refuses multiple insert entries and unsafe ass
   await assert.rejects(readPublishedAssets(root, 'sample', { dsh: { bundle: { patch: '../outside.yml' } } }), { code: 'BUNDLE_UNSUPPORTED' })
 })
 
-test('implemented Worker builtin requests remain external while other system modules fail', async t => {
+test('builtin requests remain in compiled modules for runtime resolution', async t => {
   const { compiler, store } = await setup(t)
   for (const name of ['child_process', 'fs', 'https', 'os', 'path', 'string_decoder']) {
     const manifest = await compiler.build(request(`export const apply = () => require("node:${name}")`))
@@ -304,7 +297,7 @@ test('implemented Worker builtin requests remain external while other system mod
     assert.ok(new TextDecoder().decode(await store.get(file.objectKey)).includes(`require("node:${name}")`))
     assert.deepEqual(manifest.packages[0]!.dependencies, {})
   }
-  await assert.rejects(compiler.build(request('export const apply = () => require("node:net")')), { code: 'NODE_MODULE_UNSUPPORTED' })
+  assert.equal((await compiler.build(request('export const apply = () => require("node:net")'))).packages.length, 1)
 })
 
 test('latest registry resolution pins the reported version and leaves source dependency rules strict', async t => {
@@ -324,12 +317,7 @@ test('latest registry resolution pins the reported version and leaves source dep
   await assert.rejects(compiler.build(input), { code: 'UNSUPPORTED_DEPENDENCY_SPEC' })
 })
 
-test('compiler import admission follows the DSH implemented and optional proxy roster, excluding mocks', async t => {
-  assert.ok(lowerModule.importableBuiltins?.includes('node:crypto'))
-  assert.ok(lowerModule.importableBuiltins?.includes('node:url'))
-  assert.ok(!lowerModule.importableBuiltins?.includes('node:net'))
-  assert.ok(lowerModule.importableBuiltins?.includes('node:dns'))
-  assert.ok(lowerModule.importableBuiltins?.includes('node:dns/promises'))
+test('compiled crypto calls use the real Worker implementation without static builtin admission', async t => {
   const { compiler, store } = await setup(t)
   const manifest = await compiler.build(request('import { createHash } from "node:crypto"; export const apply = () => createHash("sha256").update("dsh-account:default").digest("hex")'))
   const file = manifest.packages[0]!.files[0]!
@@ -342,7 +330,7 @@ test('compiler import admission follows the DSH implemented and optional proxy r
   assert.equal(typeof module.exports.apply, 'function')
   if (typeof module.exports.apply !== 'function') throw new Error('Missing fixture apply')
   assert.equal(module.exports.apply(), sha256('dsh-account:default'))
-  for (const name of ['node:net', 'node:vm']) await assert.rejects(compiler.build(request(`export const apply = () => require("${name}")`)), { code: 'NODE_MODULE_UNSUPPORTED' })
+  for (const name of ['node:net', 'node:vm']) assert.equal((await compiler.build(request(`export const apply = () => require("${name}")`))).packages.length, 1)
 })
 
 test('published Client exports resolve browser/import/default conditions without selecting types', async t => {
@@ -358,7 +346,9 @@ test('published Client exports resolve browser/import/default conditions without
     [{ require: './missing-require.cjs', import: './lib/import.js', default: './lib/client.js' }, 'lib/import.js'],
   ] as const) {
     const result = await readPublishedAssets(root, 'sample', { dsh, exports: { './client': entry } })
-    assert.equal(result?.metadata.exports?.['./client'], `./${expected}`)
+    const exports = result?.metadata.exports
+    assert.ok(exports && typeof exports === 'object' && !Array.isArray(exports))
+    assert.equal(exports['./client'], `./${expected}`)
     assert.deepEqual(Object.keys(result!.assets), [expected])
     assert.equal(new TextDecoder().decode(result!.assets[expected]), await readFile(join(root, expected), 'utf8'))
   }
@@ -371,8 +361,8 @@ test('conditional Client resolution retains missing-file and path-isolation chec
   const dsh = { client: { platform: 'web', inject: [] } }
   await assert.rejects(readPublishedAssets(root, 'sample', { dsh, exports: { './client': { types: './client.d.ts' } } }), { code: 'BUNDLE_UNSUPPORTED' })
   await assert.rejects(readPublishedAssets(root, 'sample', { dsh, exports: { './client': { default: './missing.js' } } }), { code: 'BUNDLE_ASSET_MISSING' })
-  await assert.rejects(readPublishedAssets(root, 'sample', { dsh, exports: { './client': { browser: './../outside.js' } } }), { code: 'BUNDLE_UNSUPPORTED' })
-  await assert.rejects(readPublishedAssets(root, 'sample', { dsh, exports: { './client': { default: '/tmp/outside.js' } } }), { code: 'BUNDLE_UNSUPPORTED' })
+  await assert.rejects(readPublishedAssets(root, 'sample', { dsh, exports: { './client': { browser: './../outside.js' } } }), { code: 'PACKAGE_EXPORTS_UNSUPPORTED' })
+  await assert.rejects(readPublishedAssets(root, 'sample', { dsh, exports: { './client': { default: '/tmp/outside.js' } } }), { code: 'PACKAGE_EXPORTS_UNSUPPORTED' })
   await assert.rejects(readPublishedAssets(root, 'sample', { dsh, exports: {} }), { code: 'BUNDLE_UNSUPPORTED' })
 })
 
@@ -394,7 +384,7 @@ test('Client seed peers use their fixed versions without becoming Host imports o
   input.plugin.peerDependencies.react = '^18.2.0'
   for (const source of ['import React from "react"; export const apply = () => React', 'export const apply = () => require("react")']) {
     input.plugin.files['src/index.ts'] = source
-    await assert.rejects(compiler.build(input), { code: 'CLIENT_PACKAGE_HOST_IMPORT' })
+    assert.deepEqual((await compiler.build(input)).packages[0]!.dependencies, {})
   }
   input.plugin.name = 'react'
   await assert.rejects(compiler.build(input), { code: 'CORE_PACKAGE_PROTECTED' })
@@ -424,7 +414,7 @@ test('mjs external defaults follow Worker ESM and CommonJS exports while CommonJ
   input.plugin.files = { 'index.mjs': 'import Schema from "schema-fixture"; export const value = Schema.number(); export const same = Schema;' }
   input.plugin.peerDependencies = { 'schema-fixture': '1.0.0' }
   const manifest = await compiler.build(input)
-  const file = manifest.packages[0]!.files.find(file => file.path === 'index.js')!
+  const file = manifest.packages[0]!.files.find(file => file.path === manifest.plugin.entry)!
   const code = new TextDecoder().decode(await store.get(file.objectKey))
   const schema = Object.assign(() => 'schema', { number: () => 42 })
   const namespace = Object.defineProperty({ default: schema }, '__esModule', { value: true })
@@ -436,7 +426,7 @@ test('mjs external defaults follow Worker ESM and CommonJS exports while CommonJ
   }
   const cjs = request('module.exports = value => value * 2')
   const builtCjs = await compiler.build(cjs)
-  const cjsFile = builtCjs.packages[0]!.files.find(file => file.path === 'index.js')!
+  const cjsFile = builtCjs.packages[0]!.files.find(file => file.path === builtCjs.plugin.entry)!
   const raw: { exports: unknown } = { exports: {} }
   new Function('require', 'exports', 'module', new TextDecoder().decode(await store.get(cjsFile.objectKey)))(() => assert.fail('Unexpected dependency'), raw.exports, raw)
   assert.equal(typeof raw.exports, 'function')
@@ -454,9 +444,9 @@ test('optional DNS imports compile while actual unavailable calls fail and guard
     const pkg = manifest.packages.find(pkg => pkg.id === manifest.plugin.packageId)!
     const file = pkg.files.find(file => file.path === pkg.entry)!
     const code = new TextDecoder().decode(await store.get(file.objectKey))
-    assert.match(code, /require\("node:dns"\)/)
+    assert.ok(code.includes(`require(${JSON.stringify(specifier)})`))
     const module: { exports: Record<string, unknown> } = { exports: {} }
-    new Function('module', 'exports', 'require', code)(module, module.exports, (name: string) => { assert.equal(name, 'node:dns'); return dns })
+    new Function('module', 'exports', 'require', code)(module, module.exports, (name: string) => { assert.equal(name, specifier); return dns })
     const { unguarded, guarded } = module.exports
     assert.equal(typeof unguarded, 'function'); assert.equal(typeof guarded, 'function')
     if (typeof unguarded !== 'function' || typeof guarded !== 'function') throw new Error('Missing DNS fixtures')
@@ -470,7 +460,6 @@ test('optional DNS imports compile while actual unavailable calls fail and guard
 
 test('optional v8 imports preserve guarded heap checks without fabricating statistics', async t => {
   const { compiler, store } = await setup(t)
-  assert.ok(lowerModule.importableBuiltins?.includes('node:v8'))
   const v8: Record<string, unknown> = await import(resolve(dshRoot, 'packages/experimental/webworker-runtime/src/node/builtin_modules/optional/v8.ts'))
   for (const specifier of ['node:v8', 'v8']) {
     const manifest = await compiler.build(request(`import { getHeapStatistics } from "${specifier}";
@@ -484,9 +473,9 @@ test('optional v8 imports preserve guarded heap checks without fabricating stati
     const pkg = manifest.packages.find(pkg => pkg.id === manifest.plugin.packageId)!
     const file = pkg.files.find(file => file.path === pkg.entry)!
     const code = new TextDecoder().decode(await store.get(file.objectKey))
-    assert.match(code, /require\("node:v8"\)/)
+    assert.ok(code.includes(`require(${JSON.stringify(specifier)})`))
     const module: { exports: Record<string, unknown> } = { exports: {} }
-    new Function('module', 'exports', 'require', code)(module, module.exports, (name: string) => { assert.equal(name, 'node:v8'); return v8 })
+    new Function('module', 'exports', 'require', code)(module, module.exports, (name: string) => { assert.equal(name, specifier); return v8 })
     const { unguarded, admit } = module.exports
     if (typeof unguarded !== 'function' || typeof admit !== 'function') throw new Error('Missing heap admission fixtures')
     assert.throws(() => unguarded(), { code: 'ERR_FEATURE_UNAVAILABLE_ON_PLATFORM' })

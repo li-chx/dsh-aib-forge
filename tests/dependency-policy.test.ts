@@ -70,6 +70,9 @@ test('one plan can carry private versions and a separate explicit image peer', a
   const rightPackage = result.packages.find(pkg => pkg.name === 'right')!
   assert.notEqual(leftPackage.dependencies.ordinary, rightPackage.dependencies.ordinary)
   assert.deepEqual(result.packages.find(pkg => pkg.name === 'peer-user')!.dependencies, {})
+  assert.deepEqual(result.packages.find(pkg => pkg.name === 'peer-user')!.hostDependencies, ['ordinary'])
+  assert.deepEqual(leftPackage.hostDependencies, [])
+  assert.deepEqual(rightPackage.hostDependencies, [])
 })
 
 test('fixed packages remain shared and cannot be privately substituted or installed as plugins', async t => {
@@ -114,12 +117,13 @@ test('non-image peers use an existing consumer provider and validate both declar
   await assert.rejects(f.compiler.build(request), { code: 'PEER_VERSION_MISMATCH' })
 })
 
-test('optional unused peers may be absent, but importing them requires an actual provider', async t => {
+test('optional missing peers stay absent from the plan for runtime guarded loads', async t => {
   const f = await fixture(t)
   const request = input(); request.plugin.peerDependencies = { missing: '^1.0.0' }; request.plugin.peerDependenciesMeta = { missing: { optional: true } }
   assert.equal((await f.compiler.build(request)).packages.length, 1)
   request.plugin.files['index.js'] = 'export { value } from "missing"'
-  await assert.rejects(f.compiler.build(request), { code: 'PEER_MISSING' })
+  const built = await f.compiler.build(request)
+  assert.deepEqual(built.packages[0]!.dependencies, {})
 })
 
 test('a target peer cannot silently replace its consumer private provider', async t => {
@@ -168,5 +172,5 @@ test('optional unused peers still validate installed providers and same-name dep
   await f.add('provider', '1.5.0')
   await assert.rejects(f.compiler.build(request), { code: 'DEPENDENCY_VERSION_MISMATCH' })
   request.plugin.dependencies = { provider: '^1.0.0' }
-  assert.equal((await f.compiler.build(request)).packages.length, 1)
+  assert.equal((await f.compiler.build(request)).packages.length, 2)
 })

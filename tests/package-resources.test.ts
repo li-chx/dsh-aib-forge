@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve, dirname } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { collectPackageResources, resolveResourceLimits } from '../src/package-resources.js'
+import { collectPackageFiles, resolveResourceLimits } from '../src/package-resources.js'
 import { readPublishedAssets } from '../src/package-assets.js'
 import { PnpmPackageResolver, type PackageResolver } from '../src/resolver.js'
 import { ForgeCompiler, loadDshLowerer } from '../src/compiler.js'
@@ -23,25 +23,26 @@ async function put(directory: string, path: string, content: string | Uint8Array
   await writeFile(join(directory, path), content)
 }
 
-test('published non-module data retains its paths and binary bytes without copying dependencies or source modules', async t => {
+test('published non-module data retains its paths and binary bytes while collecting runtime modules separately from excluded declarations and dependencies', async t => {
   const directory = await fixture(t)
   const binary = new Uint8Array([0, 255, 1, 128])
   for (const path of ['package.json', 'lib/index.js', 'lib/source.mjs', 'src/helper.ts', 'src/types.d.ts', 'lib/source.js.map', 'native/addon.node', 'node_modules/dep/data.json', 'deep/node_modules/dep/data.json']) await put(directory, path, '{}')
   await put(directory, 'skills/sample/SKILL.md', 'Read references/data.json')
   await put(directory, 'skills/sample/references/data.json', '{"answer":42}')
   await put(directory, 'assets/icon.png', binary)
-  const result = await collectPackageResources(directory, new Set(['lib/index.js']), { 'client.js': new Uint8Array([1]) }, defaults)
+  const { assets: result, modules } = await collectPackageFiles(directory, { 'client.js': new Uint8Array([1]) }, defaults)
   assert.deepEqual(Object.keys(result).sort(), ['assets/icon.png', 'client.js', 'skills/sample/SKILL.md', 'skills/sample/references/data.json'])
   assert.deepEqual(result['assets/icon.png'], binary)
+  assert.deepEqual(Object.keys(modules).sort(), ['lib/index.js', 'lib/source.mjs', 'src/helper.ts'])
 })
 
 test('resource caps include declared assets, enforce exact boundaries and reject unsafe configuration', async t => {
   const directory = await fixture(t)
   await put(directory, 'data.bin', new Uint8Array([1, 2, 3]))
   const declared = { 'client.js': new Uint8Array([4, 5]) }
-  assert.equal(Object.keys(await collectPackageResources(directory, new Set(), declared, { maxResourceFiles: 2, maxResourceBytes: 5 })).length, 2)
+  assert.equal(Object.keys((await collectPackageFiles(directory, declared, { maxResourceFiles: 2, maxResourceBytes: 5 })).assets).length, 2)
   for (const limits of [{ maxResourceFiles: 1, maxResourceBytes: 5 }, { maxResourceFiles: 2, maxResourceBytes: 4 }]) {
-    await assert.rejects(collectPackageResources(directory, new Set(), declared, limits), { code: 'RESOURCE_LIMIT_EXCEEDED' })
+    await assert.rejects(collectPackageFiles(directory, declared, limits), { code: 'RESOURCE_LIMIT_EXCEEDED' })
   }
   for (const maxResourceBytes of [0, -1, NaN, Infinity, 1.5]) assert.throws(() => new PnpmPackageResolver({ executable: 'pnpm', registry: 'https://registry.npmjs.org/', timeoutMs: 1000, maxResourceBytes }), /positive safe integer/)
   await put(directory, 'client.js', '123456')
@@ -53,11 +54,11 @@ test('resources refuse internal and escaping symlinks and unsupported Worker pat
   await put(directory, 'data.bin', 'ok')
   for (const target of ['data.bin', '../outside']) {
     await symlink(target, join(directory, 'alias'))
-    await assert.rejects(collectPackageResources(directory, new Set(), {}, defaults), { code: 'RESOURCE_SYMLINK_UNSUPPORTED' })
+    await assert.rejects(collectPackageFiles(directory, {}, defaults), { code: 'RESOURCE_SYMLINK_UNSUPPORTED' })
     await rm(join(directory, 'alias'))
   }
   await put(directory, '参考.md', 'unsupported path')
-  await assert.rejects(collectPackageResources(directory, new Set(), {}, defaults), { code: 'RESOURCE_PATH_UNSUPPORTED' })
+  await assert.rejects(collectPackageFiles(directory, {}, defaults), { code: 'RESOURCE_PATH_UNSUPPORTED' })
 })
 
 test('published nested entry resolves packaged resources from import.meta.url and updates resource identities', async t => {
@@ -81,9 +82,9 @@ test('published nested entry resolves packaged resources from import.meta.url an
   const request = { protocol: 1 as const, generation: 'test-resources', pluginId: 'resource-fixture', spec: 'resource-fixture@1.0.0' }
   const first = await compiler.buildPackage(request)
   const pkg = first.packages[0]!
-  assert.equal(pkg.entry, 'lib/index.js')
+  assert.equal(pkg.entry, 'lib/index.mjs')
   assert.equal(first.plugin.entry, pkg.entry)
-  assert.equal(pkg.metadata?.exports?.['.'], './lib/index.js')
+  assert.deepEqual(pkg.metadata?.exports, { '.': './lib/index.mjs', './cordis.patch.yml': './cordis.patch.yml', './package.json': './package.json' })
   const mounted = join(directory, 'mounted')
   for (const file of pkg.files) await put(mounted, file.path, (await store.get(file.objectKey))!)
   const code = await readFile(join(mounted, pkg.entry), 'utf8')

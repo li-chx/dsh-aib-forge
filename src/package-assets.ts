@@ -8,6 +8,7 @@ import { ForgeError, packageName, relativePath } from './protocol.js'
 import type { PackageMetadata } from './protocol.js'
 import { checkResourceBudget, validateResourcePath } from './package-resources.js'
 import type { ResourceLimits } from './package-resources.js'
+import { packageExports, exportSubpaths } from './package-exports.js'
 import { applyClientCompatibility } from './client-compatibility.js'
 
 // Unknown descriptive fields are stripped; only declarations consumed by this compiler are retained.
@@ -25,12 +26,12 @@ const issueDetails = (error: z.ZodError): string => error.issues.map(issue => `$
 export interface PublishedAssets { metadata: PackageMetadata; assets: Record<string, Uint8Array> }
 /** Read only declared supported assets inside the installed package directory. */
 export async function readPublishedAssets(directory: string, name: string, raw: Record<string, unknown>, outputEntry = 'index.js', limits?: ResourceLimits): Promise<PublishedAssets | undefined> {
-  if (raw.dsh === undefined && raw.repository === undefined) return undefined
+  if (raw.dsh === undefined && raw.repository === undefined && raw.exports === undefined) return undefined
   const dsh = dshSchema.safeParse(raw.dsh === undefined ? {} : raw.dsh)
   if (!dsh.success) throw new ForgeError('BUNDLE_UNSUPPORTED', `Unsupported dsh metadata for ${name}: ${issueDetails(dsh.error)}`)
   const assets: Record<string, Uint8Array> = {}
-  const exports: Record<string, string> = { '.': `./${outputEntry}`, './package.json': './package.json' }
-  const metadata: PackageMetadata = { ...raw.dsh === undefined ? {} : { dsh: { ...dsh.data.bundle === undefined ? {} : { bundle: dsh.data.bundle }, ...dsh.data.client === undefined ? {} : { client: dsh.data.client } } }, exports }
+  let exports = raw.exports === undefined ? undefined : packageExports(raw.exports, name)
+  const metadata: PackageMetadata = { ...raw.dsh === undefined ? {} : { dsh: { ...dsh.data.bundle === undefined ? {} : { bundle: dsh.data.bundle }, ...dsh.data.client === undefined ? {} : { client: dsh.data.client } } }, ...(exports === undefined ? {} : { exports }) }
   if (raw.repository !== undefined) {
     const repository = z.union([z.string().min(1), z.object({ url: z.string().min(1) })]).safeParse(raw.repository)
     if (!repository.success) throw new ForgeError('BUNDLE_UNSUPPORTED', `Invalid repository metadata for ${name}`)
@@ -95,7 +96,8 @@ export async function readPublishedAssets(directory: string, name: string, raw: 
     if (overrides.has(insertedId)) throw new ForgeError('BUNDLE_UNSUPPORTED', `${subject}: override cannot target its own inserted id ${insertedId}`)
     assets[asset.path] = asset.bytes
     metadata.dsh!.bundle = { patch: `./${asset.path}` }
-    exports[`./${asset.path}`] = `./${asset.path}`
+    exports = { ...exportSubpaths(exports, outputEntry), [`./${asset.path}`]: `./${asset.path}`, './package.json': './package.json' }
+    metadata.exports = exports
   }
   if (dsh.data.client) {
     let entry: string | undefined
@@ -104,7 +106,8 @@ export async function readPublishedAssets(directory: string, name: string, raw: 
     if (entry === undefined || !entry.startsWith('./')) throw new ForgeError('BUNDLE_UNSUPPORTED', `${name} needs a package-relative ./client export for browser/import/default conditions`)
     const asset = await load(entry)
     assets[asset.path] = applyClientCompatibility(name, raw.version, asset.bytes)
-    exports['./client'] = `./${asset.path}`
+    exports = { ...exportSubpaths(exports, outputEntry), './client': `./${asset.path}` }
+    metadata.exports = exports
   }
   return { metadata, assets }
 }

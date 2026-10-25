@@ -20,8 +20,6 @@
     "test:plugin-hub": "node scripts/verify-plugin-hub.mjs"
   },
   "dependencies": {
-    "acorn": "^8.15.0",
-    "acorn-walk": "^8.3.4",
     "esbuild": "^0.25.0",
     "resolve.exports": "^2.0.3",
     "semver": "^7.7.0",

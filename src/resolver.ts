@@ -7,7 +7,7 @@ import semver from 'semver'
 import { z } from 'zod'
 import { readPublishedAssets } from './package-assets.js'
 import type { PublishedAssets } from './package-assets.js'
-import { collectPackageResources, resolveResourceLimits, validateResourcePath } from './package-resources.js'
+import { collectPackageFiles, resolveResourceLimits, validateResourcePath } from './package-resources.js'
 import type { ResourceLimits } from './package-resources.js'
 import { ForgeError, packageName } from './protocol.js'
 
@@ -20,7 +20,7 @@ const manifestSchema = z.object({
   scripts: z.record(z.string(), z.string()).optional(),
 }).passthrough()
 /** Manifest and entry resolved for an installed npm package. */
-export interface ResolvedPackage extends Partial<PublishedAssets> { directory: string; entry: string; outputEntry?: string; name: string; version: string; dependencies: Record<string, string>; peerDependencies: Record<string, string>; peerDependenciesMeta?: Record<string, { optional?: boolean | undefined }>; requireCompatible?: boolean }
+export interface ResolvedPackage extends Partial<PublishedAssets> { directory: string; entry: string; outputEntry?: string; modules?: Record<string, Uint8Array>; resourceLimits?: ResourceLimits; name: string; version: string; dependencies: Record<string, string>; peerDependencies: Record<string, string>; peerDependenciesMeta?: Record<string, { optional?: boolean | undefined }> }
 /** Dependency installation and package lookup, replaceable independently. */
 export interface PackageResolver {
   prepare(directory: string, dependencies: Record<string, string>): Promise<void>
@@ -99,22 +99,16 @@ export class PnpmPackageResolver implements PackageResolver {
     if (!semver.valid(manifest.version)) throw new ForgeError('PACKAGE_INVALID', `Invalid package version for ${name}`)
     if (['preinstall', 'install', 'postinstall'].some(key => manifest.scripts?.[key])) throw new ForgeError('INSTALL_SCRIPT_UNSUPPORTED', `${name} declares installation scripts; Forge does not execute them`)
     let entry: string | undefined
-    let requireCompatible = true
     if (manifest.exports !== undefined) {
       try {
         const spec = { name: manifest.name, exports: manifest.exports }
-        const imported = resolveExports(spec, '.', { browser: true })?.[0]
-        let required: string | undefined
-        try { required = resolveExports(spec, '.', { browser: true, require: true })?.[0] }
-        catch (error) { /* An import-only export is usable until a CommonJS consumer requests it. */ }
-        requireCompatible = imported !== undefined && required !== undefined && resolve(directory, imported) === resolve(directory, required)
+        const imported = resolveExports(spec, '.', { browser: true, conditions: ['require'] })?.[0]
         entry = imported
       }
       catch (error) { throw new ForgeError('PACKAGE_ENTRY_UNSUPPORTED', `${name} does not expose a compatible root entry: ${error instanceof Error ? error.message : String(error)}`) }
     } else {
       if (manifest.browser && typeof manifest.browser !== 'string') throw new ForgeError('PACKAGE_ENTRY_UNSUPPORTED', `${name} uses a browser remapping object, which this generation does not support`)
       entry = typeof manifest.browser === 'string' ? manifest.browser : manifest.module ?? manifest.main ?? 'index.js'
-      requireCompatible = typeof manifest.browser === 'string' || !manifest.module || resolve(directory, entry) === resolve(directory, manifest.main ?? 'index.js')
     }
     if (!entry || !resolve(directory, entry).startsWith(directory + '/')) throw new ForgeError('PACKAGE_ENTRY_UNSUPPORTED', `${name} has no safe package entry`)
     const candidate = resolve(directory, entry)
@@ -127,10 +121,10 @@ export class PnpmPackageResolver implements PackageResolver {
     const actualEntry = await realpath(file)
     if (!actualEntry.startsWith(directory + '/')) throw new ForgeError('SOURCE_PATH_ESCAPE', `${name} entry escapes its package`)
     const sourceEntry = relative(directory, file).replaceAll('\\', '/')
-    const outputEntry = /\.[^/.]+$/.test(sourceEntry) ? sourceEntry.replace(/\.[^/.]+$/, '.js') : `${sourceEntry}.js`
+    const outputEntry = sourceEntry
     validateResourcePath(outputEntry)
     const published = await readPublishedAssets(directory, manifest.name, manifest, outputEntry, this.resourceLimits)
-    const assets = await collectPackageResources(directory, new Set([sourceEntry, outputEntry]), published?.assets ?? {}, this.resourceLimits)
-    return { directory, entry: file, outputEntry, requireCompatible, name: manifest.name, version: manifest.version, dependencies: manifest.dependencies ?? {}, peerDependencies: manifest.peerDependencies ?? {}, ...(manifest.peerDependenciesMeta === undefined ? {} : { peerDependenciesMeta: manifest.peerDependenciesMeta }), ...published, assets }
+    const { modules, assets } = await collectPackageFiles(directory, published?.assets ?? {}, this.resourceLimits)
+    return { directory, entry: file, outputEntry, name: manifest.name, version: manifest.version, dependencies: manifest.dependencies ?? {}, peerDependencies: manifest.peerDependencies ?? {}, ...(manifest.peerDependenciesMeta === undefined ? {} : { peerDependenciesMeta: manifest.peerDependenciesMeta }), ...published, assets, modules, resourceLimits: this.resourceLimits }
   }
 }

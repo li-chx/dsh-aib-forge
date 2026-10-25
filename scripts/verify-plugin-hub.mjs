@@ -10,6 +10,7 @@ import { overrideFixtures, verifyBundleOverrides } from './verify-bundle-overrid
 import { dnsFixtures, unsupportedNetName, verifyOptionalDns } from './verify-optional-dns.mjs'
 import { v8Fixtures, verifyOptionalV8 } from './verify-optional-v8.mjs'
 import { verifyContextPlugin } from './verify-context-plugin.mjs'
+import { runtimeLoadingFixtures, verifyRuntimeLoading } from './verify-runtime-loading.mjs'
 import { dependencyFixtures, isolatedDependencyName, verifyDependencyIsolation } from './verify-dependency-isolation.mjs'
 import { once } from 'node:events'
 import { createServer } from 'node:http'
@@ -17,7 +18,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
-import { extname, join, resolve, sep } from 'node:path'
+import { dirname, extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
 import { FileArtifactStore, ForgeCompiler, PnpmPackageResolver, createForgeHandler, loadDshLowerer, startForgeServer } from '../dist/index.js'
@@ -66,8 +67,9 @@ const frontend = createServer((request, response) => {
 })
 let backend
 let whaleBuildFailure
-let netBuildFailure
+let netBuildResult
 const dependencyBuilds = new Map()
+const runtimeBuilds = new Map()
 let browser
 try {
   frontend.listen(0, values.host === '127.0.0.1' ? '127.0.0.1' : '0.0.0.0')
@@ -86,8 +88,9 @@ try {
     const isBuild = request.method === 'POST' && new URL(request.url).pathname === '/v1/packages/builds'
     const build = isBuild ? await request.clone().json() : undefined
     const response = await handler(request)
-    if (build?.spec === `${unsupportedNetName}@1.0.0`) netBuildFailure = { status: response.status, body: await response.clone().json() }
+    if (build?.spec === `${unsupportedNetName}@1.0.0`) netBuildResult = { status: response.status, body: await response.clone().json() }
     if (build?.spec === 'dsh-whale-widget@0.4.2') whaleBuildFailure = { status: response.status, body: await response.clone().json() }
+    if (build?.spec?.startsWith('forge-hub-runtime-loading@')) runtimeBuilds.set(build.spec, { status: response.status, body: await response.clone().json() })
     if (build?.spec?.startsWith('forge-hub-dependency-')) dependencyBuilds.set(build.spec, { status: response.status, body: await response.clone().json() })
     return response
   }, { hostname: '127.0.0.1', port: 0 })
@@ -265,9 +268,10 @@ try {
   assert.equal(loaderEntries.entries.filter(entry => entry.name === fixtureName).length, 1)
   assert.deepEqual(JSON.parse((await configCommand()).result.text), fixtureConfig)
   console.log('Hub fixture updated through @latest with configuration retained')
+  const runtimeLoading = await verifyRuntimeLoading({ page, hub, waitTask, rpc, session, builds: runtimeBuilds })
   const dependencyIsolation = await verifyDependencyIsolation({ page, hub, waitTask, rpc, session, target, builds: dependencyBuilds })
   const optionalV8 = await verifyOptionalV8({ page, hub, waitTask, rpc, session })
-  const optionalDns = await verifyOptionalDns({ page, hub, waitTask, rpc, session, netBuildFailure: () => netBuildFailure })
+  const optionalDns = await verifyOptionalDns({ page, hub, waitTask, rpc, session, netBuildResult: () => netBuildResult })
   const whaleCreated = await hub('/install', { repo: 'dsh-whale-widget', source: 'custom', installChannel: 'npm', lang: 'en', version: '0.4.2' })
   assert.equal(whaleCreated.ok, true)
   const whaleTask = await waitTask(whaleCreated.task)
@@ -305,7 +309,7 @@ try {
   assert.equal(workers, 1)
   assert.equal(await page.evaluate(() => performance.timeOrigin), timeOrigin)
   const observed = {
-    httpPort, mobile, industry, bundleOverrides, dependencyIsolation, optionalDns, optionalV8, contextPlugin, ...extra, package: 'dsh-plugin@2.2.1', hostRoutes: true, clientFactory: true, settingsSection: true,
+    httpPort, mobile, industry, bundleOverrides, runtimeLoading, dependencyIsolation, optionalDns, optionalV8, contextPlugin, ...extra, package: 'dsh-plugin@2.2.1', hostRoutes: true, clientFactory: true, settingsSection: true,
     catalogThroughCurl: true, catalogListVisible: true, releaseAgeThroughHttps: true,
     marketplaceReopened: true, nativeManagerPackagesAvailable: true, marketplacePreservedAfterPluginInstall: true,
     marketplaceUiInstall: true, nativeToggleSingleRegistration: true,
@@ -438,12 +442,17 @@ async function startRegistry() {
   await tar.c({ cwd: directory, file: tarballPath, gzip: true }, ['package'])
   const tarball = await readFile(tarballPath)
   const fixturePackages = new Map()
-  for (const fixture of [...overrideFixtures(fixtureName), ...dnsFixtures(), ...v8Fixtures(), ...dependencyFixtures(target)]) {
+  for (const fixture of [...overrideFixtures(fixtureName), ...dnsFixtures(), ...v8Fixtures(), ...dependencyFixtures(target), ...runtimeLoadingFixtures(target)]) {
     const folder = join(temporary, `${fixture.manifest.name}-${fixture.manifest.version}`)
     await mkdir(join(folder, 'package'), { recursive: true })
     await writeFile(join(folder, 'package/package.json'), JSON.stringify(fixture.manifest))
     if (fixture.patch !== undefined) await writeFile(join(folder, 'package/cordis.patch.yml'), fixture.patch)
-    await writeFile(join(folder, 'package/index.js'), fixture.source)
+    if (fixture.source !== undefined) await writeFile(join(folder, 'package/index.js'), fixture.source)
+    for (const [path, source] of Object.entries(fixture.files ?? {})) {
+      const filename = join(folder, 'package', path)
+      await mkdir(dirname(filename), { recursive: true })
+      await writeFile(filename, source)
+    }
     const archive = join(folder, 'fixture.tgz')
     await tar.c({ cwd: folder, file: archive, gzip: true }, ['package'])
     const versions = fixturePackages.get(fixture.manifest.name) ?? new Map()

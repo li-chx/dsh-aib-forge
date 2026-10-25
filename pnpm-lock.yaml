@@ -8,12 +8,6 @@ importers:
 
   .:
     dependencies:
-      acorn:
-        specifier: ^8.15.0
-        version: 8.19.0
-      acorn-walk:
-        specifier: ^8.3.4
-        version: 8.3.5
       esbuild:
         specifier: ^0.25.0
         version: 0.25.12
@@ -363,15 +357,6 @@ packages:
   '@types/semver@7.8.0':
     resolution: {integrity: sha512-1mAINjtQCXXeLkJ9ehXkwOcBpqtLxiVtKhpUf83DdRNdQKV0iXZpaHYqRr7nj+wvxuJzoAmAwXI+sCNMv1CzLQ==}
 
-  acorn-walk@8.3.5:
-    resolution: {integrity: sha512-HEHNfbars9v4pgpW6SO1KSPkfoS0xVOM/9UzkJltjlsHZmJasxg8aXkuZa7SMf8vKGIBhpUsPluQSqhJFCqebw==}
-    engines: {node: '>=0.4.0'}
-
-  acorn@8.19.0:
-    resolution: {integrity: sha512-oJlA3XiRm7Cyk6qFD2Jn8ak9B7jSy0qy00ADO3+8dpT0LSjFihQYv4C02LFCSYJV3Q37xYwwRy5m+IpIiUzqWw==}
-    engines: {node: '>=0.4.0'}
-    hasBin: true
-
   esbuild@0.25.12:
     resolution: {integrity: sha512-bbPBYYrtZbkt6Os6FiTLCTFxvq4tt3JKall1vRwshA3fdVztsLAatFaZobhkBC8/BrPetoa0oksYoKXoG4ryJg==}
     engines: {node: '>=18'}
@@ -580,12 +565,6 @@ snapshots:
       undici-types: 7.24.6
 
   '@types/semver@7.8.0': {}
-
-  acorn-walk@8.3.5:
-    dependencies:
-      acorn: 8.19.0
-
-  acorn@8.19.0: {}
 
   esbuild@0.25.12:
     optionalDependencies:
