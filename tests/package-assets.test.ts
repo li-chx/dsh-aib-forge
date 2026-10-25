@@ -107,3 +107,40 @@ test('bundle accepts root arrays, scalars, null and standard JSON-compatible YAM
     assert.equal(new TextDecoder().decode(result?.assets['cordis.patch.yml']), patch)
   }
 })
+
+
+test('literal overrides may surround one self insertion without rewriting the published patch', async t => {
+  const root = await fixture(t)
+  for (const disabled of ['true', 'false', 'null']) {
+    const patch = `# replace the default strategy\n- id: compaction-basic\n  disabled: ${disabled}\n  config: { nested: [1, false, null] }\n- insert:\n  - id: compaction-custom\n    name: sample\n    config: ["one", 2]\n- id: existing-other\n  config: null\n`
+    await writeFile(join(root, 'cordis.patch.yml'), patch)
+    const result = await readPublishedAssets(root, 'sample', { dsh: bundle })
+    assert.equal(new TextDecoder().decode(result?.assets['cordis.patch.yml']), patch)
+  }
+})
+
+test('override admission rejects topology changes, ambiguous identities and invalid literal fields', async t => {
+  const root = await fixture(t)
+  const insertion = '- insert: [{id: self, name: sample}]\n'
+  for (const [rows, diagnostic] of [
+    ['- {id: existing}', /Override requires config or disabled/],
+    ['- {id: existing, disabled: "true"}', /disabled/],
+    ['- {id: existing, name: another, disabled: true}', /name/],
+    ['- {id: existing, group: new, config: {}}', /group/],
+    ['- {id: existing, remove: [other], config: {}}', /remove/],
+    ['- {id: existing, disabled: true}\n- {id: existing, config: {}}', /duplicate override id existing/],
+    ['- {id: self, disabled: true}', /override cannot target its own inserted id self/],
+    ['- {id: "invalid/id", disabled: true}', /id/],
+    ['- {id: existing, config: !!js "process.exit()"}', /invalid YAML/],
+    ['- {id: existing, config: .inf}', /finite/],
+    ['- {id: existing, config: {3: bad}}', /keys must be strings/],
+    ['- {id: existing, config: {a: &v 1, b: *v}}', /aliases/],
+  ] as const) {
+    await writeFile(join(root, 'cordis.patch.yml'), insertion + rows + '\n')
+    await assert.rejects(readPublishedAssets(root, 'sample', { dsh: bundle }), unsupported(diagnostic))
+  }
+  await writeFile(join(root, 'cordis.patch.yml'), '- {id: existing, disabled: true}\n')
+  await assert.rejects(readPublishedAssets(root, 'sample', { dsh: bundle }), unsupported(/exactly one self-package insert row is required/))
+  await writeFile(join(root, 'cordis.patch.yml'), '- {id: self, config: {}}\n' + insertion)
+  await assert.rejects(readPublishedAssets(root, 'sample', { dsh: bundle }), unsupported(/override cannot target its own inserted id self/))
+})

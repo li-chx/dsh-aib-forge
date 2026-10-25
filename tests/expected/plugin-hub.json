@@ -51,6 +51,19 @@
     "removedTools": true,
     "removedResourceFiles": true
   },
+  "bundleOverrides": {
+    "package": "forge-hub-override-plugin",
+    "versions": [
+      "1.0.0",
+      "1.0.1"
+    ],
+    "configurationOverridden": true,
+    "baseDisabledOnUpdate": true,
+    "disabledStatusReported": true,
+    "overlayRemainedActive": true,
+    "baseRestoredOnRemoval": true,
+    "originalConfigurationRestored": true
+  },
   "router": {
     "package": "@ljwei-stak/dsh-model-router@0.25.1",
     "hostCommand": true,

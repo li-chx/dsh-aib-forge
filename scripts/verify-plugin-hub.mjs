@@ -6,6 +6,7 @@ import { verifyHttpPort } from './verify-http-port.mjs'
 import { verifyMobilePlugin } from './verify-mobile-plugin.mjs'
 import { verifyExtraPlugins } from './verify-extra-plugins.mjs'
 import { verifyIndustryPlugin } from './verify-industry-plugin.mjs'
+import { overrideFixtureName, overrideFixtures, verifyBundleOverrides } from './verify-bundle-overrides.mjs'
 import { once } from 'node:events'
 import { createServer } from 'node:http'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -269,6 +270,7 @@ try {
   assert.equal(await page.locator('.dshwv-root').count(), 0)
   assert.equal((await command()).result.text, 'hub child active')
   console.log('Whale DNS requirement rejected without activation; existing command preserved')
+  const bundleOverrides = await verifyBundleOverrides({ page, hub, waitTask, rpc, session, fixtureConfig, fixtureName })
   const industry = await verifyIndustryPlugin({ page, hub, waitTask, rpc, session })
   const removing = await hub('/uninstall', { name: fixtureName })
   const removeTask = await waitTask(removing.task)
@@ -281,7 +283,7 @@ try {
   assert.equal(workers, 1)
   assert.equal(await page.evaluate(() => performance.timeOrigin), timeOrigin)
   const observed = {
-    httpPort, mobile, industry, ...extra, package: 'dsh-plugin@2.2.1', hostRoutes: true, clientFactory: true, settingsSection: true,
+    httpPort, mobile, industry, bundleOverrides, ...extra, package: 'dsh-plugin@2.2.1', hostRoutes: true, clientFactory: true, settingsSection: true,
     catalogThroughCurl: true, catalogListVisible: true, releaseAgeThroughHttps: true,
     marketplaceReopened: true, nativeManagerPackagesAvailable: true, marketplacePreservedAfterPluginInstall: true,
     marketplaceUiInstall: true, nativeToggleSingleRegistration: true,
@@ -409,6 +411,17 @@ async function startRegistry() {
   const tarballPath = join(directory, 'fixture.tgz')
   await tar.c({ cwd: directory, file: tarballPath, gzip: true }, ['package'])
   const tarball = await readFile(tarballPath)
+  const overlays = new Map()
+  for (const fixture of overrideFixtures(fixtureName)) {
+    const folder = join(temporary, `overlay-${fixture.manifest.version}`)
+    await mkdir(join(folder, 'package'), { recursive: true })
+    await writeFile(join(folder, 'package/package.json'), JSON.stringify(fixture.manifest))
+    await writeFile(join(folder, 'package/cordis.patch.yml'), fixture.patch)
+    await writeFile(join(folder, 'package/index.js'), fixture.source)
+    const archive = join(folder, 'fixture.tgz')
+    await tar.c({ cwd: folder, file: archive, gzip: true }, ['package'])
+    overlays.set(fixture.manifest.version, { manifest: fixture.manifest, bytes: await readFile(archive) })
+  }
   let registryUrl
   const server = createServer((request, response) => {
     void (async () => {
@@ -417,6 +430,20 @@ async function startRegistry() {
         response.setHeader('Access-Control-Allow-Origin', '*')
         if (request.method === 'OPTIONS') {
           response.writeHead(204, { 'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS' }); response.end(); return
+        }
+        if (path.startsWith(`/${overrideFixtureName}/-/`)) {
+          const version = path.slice(`/${overrideFixtureName}/-/`.length).replace(/\.tgz$/, '')
+          const fixture = overlays.get(version)
+          response.writeHead(fixture ? 200 : 404, { 'content-type': 'application/octet-stream' }); response.end(fixture?.bytes); return
+        }
+        if (path === `/${overrideFixtureName}` || path.startsWith(`/${overrideFixtureName}/`)) {
+          const versions = Object.fromEntries([...overlays].map(([version, fixture]) => [version, { ...fixture.manifest, dist: {
+            tarball: `${registryUrl}/${overrideFixtureName}/-/${version}.tgz`, integrity: `sha512-${createHash('sha512').update(fixture.bytes).digest('base64')}`,
+          } }]))
+          const version = path.slice(overrideFixtureName.length + 2)
+          const metadata = { name: overrideFixtureName, 'dist-tags': { latest: '1.0.1' }, versions }
+          const value = version ? versions[version === 'latest' ? '1.0.1' : version] : metadata
+          response.writeHead(value ? 200 : 404, { 'content-type': 'application/json' }); response.end(JSON.stringify(value ?? { error: 'Version not found' })); return
         }
         if (path === '/fixture.tgz') {
           response.writeHead(200, { 'content-type': 'application/octet-stream' }); response.end(tarball); return

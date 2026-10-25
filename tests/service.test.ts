@@ -287,7 +287,7 @@ test('published package requests reject external locations and protected hosts b
   await assert.rejects(compiler.buildPackage({ protocol: 1, generation: target.generation, pluginId: 'test', spec: '@deepseek-ai/cordis@4.0.0' }), { code: 'CORE_PACKAGE_PROTECTED' })
 })
 
-test('published bundle validation refuses multiple rows and unsafe asset references', async t => {
+test('published bundle validation refuses multiple insert entries and unsafe asset references', async t => {
   const { readPublishedAssets } = await import('../src/package-assets.js')
   const root = await mkdtemp(join(tmpdir(), 'forge-bundle-'))
   t.after(() => rm(root, { recursive: true, force: true }))
