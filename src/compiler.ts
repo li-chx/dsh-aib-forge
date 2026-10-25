@@ -49,9 +49,11 @@ const isCore = (name: string): boolean => name === '@deepseek-ai/dsh' || name.st
 /** Validate target versions once at startup. */
 export function validateTarget(target: BuildTarget): void {
   if (target.protocol !== 1 || !/^[a-zA-Z0-9_-]+$/.test(target.generation)) throw new Error('Invalid configured build target')
+  if (!Array.isArray(target.sharedPackages) || target.sharedPackages.some(name => !barePackage.test(name)) || new Set(target.sharedPackages).size !== target.sharedPackages.length) throw new Error('Invalid configured shared packages')
   for (const [face, packages] of Object.entries({ host: target.hostPackages, client: target.clientPackages ?? {} })) {
     for (const [name, version] of Object.entries(packages)) if (!barePackage.test(name) || !semver.valid(version)) throw new Error(`Invalid ${face} package ${name}@${version}`)
   }
+  for (const name of [...Object.keys(target.clientPackages ?? {}), ...Object.keys(target.hostPackages).filter(isCore)]) if (!target.sharedPackages.includes(name)) throw new Error(`Shared package policy omits ${name}`)
 }
 function permitsHostPatchUpgrade(name: string, range: string, host: string, allowed: ReadonlySet<string>): boolean {
   if (!allowed.has(name) || !/^\d+\.\d+\.\d+(?:\+[0-9A-Za-z.-]+)?$/.test(range)) return false
@@ -60,19 +62,23 @@ function permitsHostPatchUpgrade(name: string, range: string, host: string, allo
   return requested !== null && supplied !== null && requested.prerelease.length === 0 && supplied.prerelease.length === 0
     && requested.major === supplied.major && requested.minor === supplied.minor && supplied.patch >= requested.patch
 }
-function runtimeDependency(name: string, range: string, target: BuildTarget, allowed: ReadonlySet<string>, clientPeer = false): 'host' | 'client' | undefined {
+/** Select a fixed shared provider, an explicit target peer, or a private dependency. */
+function runtimeDependency(name: string, range: string, target: BuildTarget, allowed: ReadonlySet<string>, peer = false): 'host' | 'client' | undefined {
+  const shared = target.sharedPackages.includes(name) || isCore(name)
   const host = target.hostPackages[name]
-  if (host !== undefined) {
-    if (!semver.satisfies(host, range, { includePrerelease: true }) && !permitsHostPatchUpgrade(name, range, host, allowed)) throw new ForgeError('HOST_VERSION_MISMATCH', `${name} requires ${range}; the frontend provides ${host}`)
-    return 'host'
-  }
   const client = target.clientPackages?.[name]
-  if (client !== undefined && clientPeer) {
+  if (!shared && !peer) return undefined
+  if (host !== undefined) {
+    if (semver.satisfies(host, range, { includePrerelease: true }) || permitsHostPatchUpgrade(name, range, host, allowed)) return 'host'
+    if (peer || shared) throw new ForgeError('HOST_VERSION_MISMATCH', `${name} requires ${range}; the frontend provides ${host}`)
+    return undefined
+  }
+  if (client !== undefined && peer) {
     if (!semver.satisfies(client, range, { includePrerelease: true })) throw new ForgeError('CLIENT_VERSION_MISMATCH', `${name} requires ${range}; the frontend Client provides ${client}`)
     return 'client'
   }
   if (client !== undefined) throw new ForgeError('CLIENT_PACKAGE_HOST_IMPORT', `${name} is only available to Client code, not the Worker Host`)
-  if (isCore(name)) throw new ForgeError('HOST_PACKAGE_UNAVAILABLE', `${name} is not provided by this frontend generation`)
+  if (shared) throw new ForgeError('HOST_PACKAGE_UNAVAILABLE', `${name} is shared but not provided by this frontend generation`)
   return undefined
 }
 function assertStaticRequests(source: string): void {
@@ -112,19 +118,19 @@ export class ForgeCompiler implements BuildExecutor {
     if (request.generation !== target.generation) throw new ForgeError('GENERATION_MISMATCH', `Expected generation ${target.generation}`, 409)
     const plugin = request.plugin
     if (!semver.valid(plugin.version)) throw new ForgeError('INVALID_REQUEST', 'Plugin version must be an exact semver version')
-    if (target.hostPackages[plugin.name] !== undefined || target.clientPackages?.[plugin.name] !== undefined || isCore(plugin.name)) throw new ForgeError('CORE_PACKAGE_PROTECTED', `Cannot replace host package ${plugin.name}`)
+    if (target.hostPackages[plugin.name] !== undefined || target.clientPackages?.[plugin.name] !== undefined || target.sharedPackages.includes(plugin.name) || isCore(plugin.name)) throw new ForgeError('CORE_PACKAGE_PROTECTED', `Cannot replace host package ${plugin.name}`)
     if (!(plugin.entry in plugin.files)) throw new ForgeError('INVALID_REQUEST', 'Plugin entry must be present in files')
     for (const file of Object.keys(plugin.files)) {
       if (!/\.(?:ts|js|mjs|cjs|json)$/.test(file) || file.split('/').includes('node_modules') || file === 'package.json') throw new ForgeError('SOURCE_FILE_UNSUPPORTED', `Unsupported source file ${file}; provide JS, TS or JSON source files outside node_modules`)
     }
     validateDependencies(plugin.dependencies); validateDependencies(plugin.peerDependencies)
     const install: Record<string, string> = {}
-    for (const [name, range] of Object.entries({ ...plugin.dependencies, ...plugin.peerDependencies })) if (!runtimeDependency(name, range, target, this.allowHostPatchUpgrade, Object.hasOwn(plugin.peerDependencies, name))) install[name] = range
+    for (const [name, range] of Object.entries(plugin.dependencies)) if (!runtimeDependency(name, range, target, this.allowHostPatchUpgrade)) install[name] = range
     const directory = await mkdtemp(join(this.options.temporaryRoot ?? tmpdir(), 'dsh-forge-'))
     try {
       for (const [file, contents] of Object.entries(plugin.files)) { const path = join(directory, file); await mkdir(dirname(path), { recursive: true }); await writeFile(path, contents) }
       await resolver.prepare(directory, install)
-      return await this.compile(directory, { directory, entry: join(directory, plugin.entry), name: plugin.name, version: plugin.version, dependencies: plugin.dependencies, peerDependencies: plugin.peerDependencies }, plugin.id)
+      return await this.compile(directory, { directory, entry: join(directory, plugin.entry), name: plugin.name, version: plugin.version, dependencies: plugin.dependencies, peerDependencies: plugin.peerDependencies, ...(plugin.peerDependenciesMeta === undefined ? {} : { peerDependenciesMeta: plugin.peerDependenciesMeta }) }, plugin.id)
     } finally { await rm(directory, { recursive: true, force: true }) }
   }
   /** Resolve and compile a published registry package without executing its install scripts. */
@@ -136,7 +142,7 @@ export class ForgeCompiler implements BuildExecutor {
     if (!matched) throw new ForgeError('UNSUPPORTED_DEPENDENCY_SPEC', 'Expected an npm package name with an optional semver version')
     const name = matched[1]!
     let range = matched[2] ?? '*'
-    if (Object.hasOwn(target.hostPackages, name) || target.clientPackages?.[name] !== undefined || isCore(name)) throw new ForgeError('CORE_PACKAGE_PROTECTED', `Cannot replace host package ${name}`)
+    if (Object.hasOwn(target.hostPackages, name) || target.clientPackages?.[name] !== undefined || target.sharedPackages.includes(name) || isCore(name)) throw new ForgeError('CORE_PACKAGE_PROTECTED', `Cannot replace host package ${name}`)
     if (range === 'latest') {
       if (resolver.resolveTag === undefined) throw new ForgeError('PACKAGE_TAG_UNSUPPORTED', 'This resolver cannot resolve the latest registry tag')
       range = await resolver.resolveTag(name, 'latest')
@@ -157,16 +163,24 @@ export class ForgeCompiler implements BuildExecutor {
       const active = new Set<string>()
       const hostPackages: Record<string, string> = {}
       const clientPackages: Record<string, string> = {}
-      const compilePackage = async (pkg: ResolvedPackage): Promise<PackageArtifact> => {
+      const compilePackage = async (pkg: ResolvedPackage, inheritedPrivate: ReadonlySet<string> = new Set()): Promise<PackageArtifact> => {
+        validateDependencies(pkg.dependencies); validateDependencies(pkg.peerDependencies)
+        // A target peer cannot silently bind the image when its consumer supplies a private instance.
+        for (const name of Object.keys(pkg.peerDependencies)) {
+          if (inheritedPrivate.has(name) && target.hostPackages[name] !== undefined) throw new ForgeError('PEER_CONTEXT_UNSUPPORTED', `${pkg.name} requires peer ${name} from a private consumer context; target peers must use the shared frontend instance`)
+        }
         const cached = completed.get(pkg.directory)
         if (cached) return cached
         if (active.has(pkg.directory)) throw new ForgeError('DEPENDENCY_CYCLE_UNSUPPORTED', `Dependency cycle involving ${pkg.name} is not supported by this generation`)
         active.add(pkg.directory)
-        const declared = { ...pkg.dependencies, ...pkg.peerDependencies }
-        for (const [name, range] of Object.entries(declared)) {
-          const face = runtimeDependency(name, range, target, this.allowHostPatchUpgrade, Object.hasOwn(pkg.peerDependencies, name))
-          if (face === 'host') hostPackages[name] = target.hostPackages[name]!
-          if (face === 'client') clientPackages[name] = target.clientPackages![name]!
+        const declared = new Set([...Object.keys(pkg.dependencies), ...Object.keys(pkg.peerDependencies)])
+        const selected = new Map<string, 'host' | 'client' | undefined>()
+        const privateContext = new Set(inheritedPrivate)
+        for (const [name, range] of Object.entries(pkg.dependencies)) {
+          const face = runtimeDependency(name, range, target, this.allowHostPatchUpgrade)
+          selected.set(name, face)
+          if (face === 'host') { hostPackages[name] = target.hostPackages[name]!; privateContext.delete(name) }
+          else privateContext.add(name)
         }
         const outputEntry = pkg.outputEntry ?? 'index.js'
         if (!relativePath.safeParse(outputEntry).success || !outputEntry.endsWith('.js') || outputEntry.startsWith('index.js/') || outputEntry.split('/').includes('node_modules')) throw new ForgeError('PACKAGE_ENTRY_UNSUPPORTED', `${pkg.name} has an invalid compiled entry ${outputEntry}`)
@@ -185,7 +199,7 @@ export class ForgeCompiler implements BuildExecutor {
                 if (workerBuiltins.has(builtin)) return { path: builtin, external: true }
                 if (isAbsolute(args.path) || args.path.startsWith('node:') || nativeModules.has(args.path)) throw new ForgeError('NODE_MODULE_UNSUPPORTED', `${pkg.name} imports unsupported system module ${args.path}`)
                 if (!barePackage.test(args.path)) throw new ForgeError('PACKAGE_SUBPATH_UNSUPPORTED', `${pkg.name} imports ${args.path}; only bare package roots are supported`)
-                if (!(args.path in declared)) throw new ForgeError('UNDECLARED_DEPENDENCY', `${pkg.name} imports undeclared dependency ${args.path}`)
+                if (!declared.has(args.path)) throw new ForgeError('UNDECLARED_DEPENDENCY', `${pkg.name} imports undeclared dependency ${args.path}`)
                 if (target.clientPackages?.[args.path] !== undefined && target.hostPackages[args.path] === undefined) throw new ForgeError('CLIENT_PACKAGE_HOST_IMPORT', `${pkg.name} imports ${args.path}, which is only available to Client code, not the Worker Host`)
                 requests.add(args.path)
                 if (args.kind === 'require-call' || args.kind === 'require-resolve') commonJsRequests.add(args.path)
@@ -221,13 +235,41 @@ export class ForgeCompiler implements BuildExecutor {
         let code: string
         try { code = lowerModule({ filename: `/${outputEntry}`, source }).code + (unwrapEntry ? '\nmodule.exports = exports.default;' : '') }
         catch (error) { throw new ForgeError('LOWERING_FAILED', error instanceof Error ? error.message : String(error)) }
+        const resolvedPeers = new Map<string, ResolvedPackage>()
+        for (const [name, range] of Object.entries(pkg.peerDependencies)) {
+          const mayBeAbsent = pkg.peerDependenciesMeta?.[name]?.optional === true && !requests.has(name) && !Object.hasOwn(pkg.dependencies, name)
+          if (mayBeAbsent && target.hostPackages[name] === undefined && target.clientPackages?.[name] === undefined && (target.sharedPackages.includes(name) || isCore(name))) continue
+          if (inheritedPrivate.has(name) && target.hostPackages[name] !== undefined) throw new ForgeError('PEER_CONTEXT_UNSUPPORTED', `${pkg.name} cannot bind target peer ${name} to a private consumer instance`)
+          const face = runtimeDependency(name, range, target, this.allowHostPatchUpgrade, true)
+          if (Object.hasOwn(pkg.dependencies, name) && selected.get(name) !== face) throw new ForgeError('PEER_CONTEXT_UNSUPPORTED', `${pkg.name} declares ${name} as both a private dependency and a target peer`)
+          if (face === 'host') hostPackages[name] = target.hostPackages[name]!
+          if (face === 'client') clientPackages[name] = target.clientPackages![name]!
+          selected.set(name, face)
+          if (face === undefined) {
+            let provider: ResolvedPackage
+            try { provider = await resolver.resolve(name, pkg.directory, directory) }
+            catch (error) {
+              if (error instanceof ForgeError && error.code === 'DEPENDENCY_MISSING') {
+                if (mayBeAbsent) continue
+                throw new ForgeError('PEER_MISSING', `${pkg.name} requires peer ${name}@${range}; no provider is installed by its consumer`)
+              }
+              throw error
+            }
+            if (!semver.satisfies(provider.version, range, { includePrerelease: true })) throw new ForgeError('PEER_VERSION_MISMATCH', `${pkg.name} requires peer ${name}@${range}; its installed provider is ${provider.version}`)
+            const dependency = pkg.dependencies[name]
+            if (dependency !== undefined && !semver.satisfies(provider.version, dependency, { includePrerelease: true })) throw new ForgeError('DEPENDENCY_VERSION_MISMATCH', `${name}@${provider.version} does not satisfy dependency ${dependency}`)
+            resolvedPeers.set(name, provider)
+          }
+        }
         const dependencies: Record<string, string> = {}
         for (const name of [...requests].sort()) {
-          if (runtimeDependency(name, declared[name]!, target, this.allowHostPatchUpgrade) === 'host') { hostPackages[name] = target.hostPackages[name]!; continue }
-          const child = await resolver.resolve(name, pkg.directory, directory)
+          if (selected.get(name) === 'host') continue
+          const child = resolvedPeers.get(name) ?? await resolver.resolve(name, pkg.directory, directory)
           if (commonJsRequests.has(name) && child.requireCompatible === false) throw new ForgeError('PACKAGE_ENTRY_UNSUPPORTED', `${pkg.name} requires ${name}, whose CommonJS entry differs from this target's shared import entry`)
-          if (!semver.satisfies(child.version, declared[name]!, { includePrerelease: true })) throw new ForgeError('DEPENDENCY_VERSION_MISMATCH', `${name}@${child.version} does not satisfy ${declared[name]}`)
-          dependencies[name] = (await compilePackage(child)).id
+          for (const range of [pkg.dependencies[name], pkg.peerDependencies[name]]) {
+            if (range !== undefined && !semver.satisfies(child.version, range, { includePrerelease: true })) throw new ForgeError('DEPENDENCY_VERSION_MISMATCH', `${name}@${child.version} does not satisfy ${range}`)
+          }
+          dependencies[name] = (await compilePackage(child, privateContext)).id
         }
         const files = []
         for (const [path, bytes] of Object.entries({ [outputEntry]: new TextEncoder().encode(code), ...pkg.assets }).sort(([left], [right]) => left.localeCompare(right))) {

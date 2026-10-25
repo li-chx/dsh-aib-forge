@@ -17,12 +17,13 @@ export const buildRequestSchema = z.object({
     files: z.record(relativePath, z.string()).refine(files => Object.keys(files).length > 0 && Object.keys(files).length <= 1000, 'Expected 1–1000 source files'),
     dependencies: z.record(packageName, z.string()),
     peerDependencies: z.record(packageName, z.string()),
+    peerDependenciesMeta: z.record(packageName, z.object({ optional: z.boolean().optional() }).strict()).optional(),
   }).strict(),
 }).strict()
 /** Validated plugin build request. */
 export type BuildRequest = z.infer<typeof buildRequestSchema>
 /** A fixed runtime and compiler generation configured by the operator. */
-export interface BuildTarget { protocol: 1; generation: string; hostPackages: Record<string, string>; clientPackages?: Record<string, string> }
+export interface BuildTarget { protocol: 1; generation: string; sharedPackages: string[]; hostPackages: Record<string, string>; clientPackages?: Record<string, string> }
 /** One immutable artifact, addressed by its bytes. */
 export interface ArtifactFile { path: string; sha256: string; size: number; objectKey: string }
 /** One package instance and its exact runtime dependency mapping. */

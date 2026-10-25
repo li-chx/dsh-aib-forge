@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { resolveDshRoot } from '../scripts/dsh-path.mjs'
 import { imageTarget } from '../scripts/image-target.mjs'
 
+const policy = (host, client) => [...Object.keys(host), ...Object.keys(client), 'runtime-replacement'].sort()
 const bytes = value => new TextEncoder().encode(JSON.stringify(value))
 const packed = {
   files: {
@@ -26,15 +27,17 @@ test('DSH checkout selection requires an explicit existing path and resolves sym
 })
 
 test('preview target uses selected image versions and runtime generation without transitive package entries', () => {
-  assert.deepEqual(imageTarget(packed, 'dsh-worker-rc2-1'), {
+  assert.deepEqual(imageTarget(packed, 'dsh-worker-rc2-1', policy), {
     protocol: 1, generation: 'dsh-worker-rc2-1',
+    sharedPackages: ['@deepseek-ai/cordis', '@deepseek-ai/dsh-client-web', 'react', 'runtime-replacement'],
     hostPackages: { '@deepseek-ai/cordis': '4.0.5', '@deepseek-ai/dsh-client-web': '0.2.1-rc.2' },
     clientPackages: { react: '18.3.1' },
   })
 })
 
 test('incomplete migration artifacts fail target derivation before preview replacement', () => {
-  assert.throws(() => imageTarget(packed, undefined), /Forge support/)
-  assert.throws(() => imageTarget({ files: {} }, 'dsh-worker-rc2-1'), /No base-image/)
-  assert.throws(() => imageTarget({ files: { ...packed.files, 'config/vfs-manifest.json': bytes({}) } }, 'dsh-worker-rc2-1'), /Client package roster/)
+  assert.throws(() => imageTarget(packed, 'dsh-worker-rc2-1'), /shared-package policy/)
+  assert.throws(() => imageTarget(packed, undefined, policy), /Forge support/)
+  assert.throws(() => imageTarget({ files: {} }, 'dsh-worker-rc2-1', policy), /No base-image/)
+  assert.throws(() => imageTarget({ files: { ...packed.files, 'config/vfs-manifest.json': bytes({}) } }, 'dsh-worker-rc2-1', policy), /Client package roster/)
 })

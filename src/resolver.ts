@@ -16,10 +16,11 @@ const manifestSchema = z.object({
   browser: z.union([z.string(), z.record(z.string(), z.union([z.string(), z.boolean()]))]).optional(),
   exports: z.unknown().optional(),
   dependencies: z.record(z.string(), z.string()).optional(), peerDependencies: z.record(z.string(), z.string()).optional(),
+  peerDependenciesMeta: z.record(z.string(), z.object({ optional: z.boolean().optional() })).optional(),
   scripts: z.record(z.string(), z.string()).optional(),
 }).passthrough()
 /** Manifest and entry resolved for an installed npm package. */
-export interface ResolvedPackage extends Partial<PublishedAssets> { directory: string; entry: string; outputEntry?: string; name: string; version: string; dependencies: Record<string, string>; peerDependencies: Record<string, string>; requireCompatible?: boolean }
+export interface ResolvedPackage extends Partial<PublishedAssets> { directory: string; entry: string; outputEntry?: string; name: string; version: string; dependencies: Record<string, string>; peerDependencies: Record<string, string>; peerDependenciesMeta?: Record<string, { optional?: boolean | undefined }>; requireCompatible?: boolean }
 /** Dependency installation and package lookup, replaceable independently. */
 export interface PackageResolver {
   prepare(directory: string, dependencies: Record<string, string>): Promise<void>
@@ -130,6 +131,6 @@ export class PnpmPackageResolver implements PackageResolver {
     validateResourcePath(outputEntry)
     const published = await readPublishedAssets(directory, manifest.name, manifest, outputEntry, this.resourceLimits)
     const assets = await collectPackageResources(directory, new Set([sourceEntry, outputEntry]), published?.assets ?? {}, this.resourceLimits)
-    return { directory, entry: file, outputEntry, requireCompatible, name: manifest.name, version: manifest.version, dependencies: manifest.dependencies ?? {}, peerDependencies: manifest.peerDependencies ?? {}, ...published, assets }
+    return { directory, entry: file, outputEntry, requireCompatible, name: manifest.name, version: manifest.version, dependencies: manifest.dependencies ?? {}, peerDependencies: manifest.peerDependencies ?? {}, ...(manifest.peerDependenciesMeta === undefined ? {} : { peerDependenciesMeta: manifest.peerDependenciesMeta }), ...published, assets }
   }
 }

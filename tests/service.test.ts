@@ -9,7 +9,7 @@ import {
 } from '../src/index.js'
 import type { BuildRequest, BuildTarget, PackageResolver } from '../src/index.js'
 
-const target: BuildTarget = { protocol: 1, generation: 'dsh-worker-1', hostPackages: { '@deepseek-ai/cordis': '4.0.0' } }
+const target: BuildTarget = { protocol: 1, generation: 'dsh-worker-1', sharedPackages: ['@deepseek-ai/cordis'], hostPackages: { '@deepseek-ai/cordis': '4.0.0' } }
 const lowerModule = await loadDshLowerer(resolve(dshRoot, 'packages/experimental/webworker-runtime/lib/index.js'))
 const request = (source = 'export const name = "fixture"; export const apply = () => "v1"'): BuildRequest => ({ protocol: 1, generation: target.generation, plugin: { id: 'fixture', name: 'fixture', version: '1.0.0', entry: 'src/index.ts', files: { 'src/index.ts': source }, dependencies: {}, peerDependencies: {} } })
 const noDependencies: PackageResolver = { async prepare() {}, async resolve() { throw new Error('Unexpected dependency') } }
@@ -378,7 +378,7 @@ test('conditional Client resolution retains missing-file and path-isolation chec
 
 test('Client seed peers use their fixed versions without becoming Host imports or replaceable packages', async t => {
   const { store } = await setup(t)
-  const clientTarget: BuildTarget = { ...target, clientPackages: { react: '18.3.1', '@deepseek-ai/dsh-client-ui-primitives': '0.2.1-rc.3' } }
+  const clientTarget: BuildTarget = { ...target, sharedPackages: [...target.sharedPackages, 'react', '@deepseek-ai/dsh-client-ui-primitives'], clientPackages: { react: '18.3.1', '@deepseek-ai/dsh-client-ui-primitives': '0.2.1-rc.3' } }
   const resolver: PackageResolver = { ...noDependencies, async prepare(_directory, dependencies) { assert.deepEqual(dependencies, {}) } }
   const compiler = new ForgeCompiler({ target: clientTarget, resolver, store, lowerModule })
   const input = request()

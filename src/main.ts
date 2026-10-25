@@ -19,7 +19,7 @@ const { values } = parseArgs({ options: {
   'install-timeout-ms': { type: 'string', default: '120000' }, 'max-request-bytes': { type: 'string', default: '2097152' }, 'max-builds': { type: 'string', default: '2' },
 } })
 if (!values.target || (!values.transformer && !values['dsh-root'])) throw new Error('Usage: pnpm dev --target target.json --dsh-root ../deepseek-harness --origin http://localhost:36935')
-const target = z.object({ protocol: z.literal(1), generation: z.string(), hostPackages: z.record(z.string(), z.string()), clientPackages: z.record(z.string(), z.string()).default({}) }).strict().parse(JSON.parse(await readFile(values.target, 'utf8')))
+const target = z.object({ protocol: z.literal(1), generation: z.string(), sharedPackages: z.array(z.string()), hostPackages: z.record(z.string(), z.string()), clientPackages: z.record(z.string(), z.string()).default({}) }).strict().parse(JSON.parse(await readFile(values.target, 'utf8')))
 validateTarget(target)
 const number = (value: string, name: string): number => { const parsed = Number(value); if (!Number.isSafeInteger(parsed) || parsed < 1) throw new Error(`Invalid ${name}`); return parsed }
 const port = number(values.port, 'port')

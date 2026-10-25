@@ -15,7 +15,7 @@ if (typeof generation !== 'string') throw new Error('Missing runtime generation'
 const root = await mkdtemp(join(tmpdir(), 'forge-npm-smoke-'))
 try {
   const store = new FileArtifactStore(join(root, 'objects'))
-  const compiler = new ForgeCompiler({ target: { protocol: 1, generation, hostPackages: {} }, store,
+  const compiler = new ForgeCompiler({ target: { protocol: 1, generation, sharedPackages: [], hostPackages: {} }, store,
     resolver: new PnpmPackageResolver({ executable: 'pnpm', timeoutMs: 120000, registry: 'https://registry.npmjs.org/' }),
     lowerModule: await loadDshLowerer(resolve(dshRoot, 'packages/experimental/webworker-runtime/lib/index.js')),
   })

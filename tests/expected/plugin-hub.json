@@ -64,6 +64,31 @@
     "baseRestoredOnRemoval": true,
     "originalConfigurationRestored": true
   },
+  "dependencyIsolation": {
+    "dependency": "fast-deep-equal",
+    "hostVersion": "3.1.3",
+    "initialA": {
+      "version": "90.0.1",
+      "count": 1
+    },
+    "initialB": {
+      "version": "90.0.2",
+      "count": 1
+    },
+    "updatedA": {
+      "version": "90.0.3",
+      "count": 1
+    },
+    "retainedB": {
+      "version": "90.0.2",
+      "count": 2
+    },
+    "hostAndPrivateInOneManifest": true,
+    "sharedCoreSameInstance": true,
+    "fileHooksObserved": true,
+    "hostPreservedAfterRemoval": true,
+    "removed": true
+  },
   "optionalDns": {
     "imported": true,
     "caughtCall": {

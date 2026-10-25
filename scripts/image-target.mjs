@@ -1,5 +1,6 @@
 /** Derive the fixed Forge target from the same packed image served to the browser. */
-export function imageTarget(packed, generation) {
+export function imageTarget(packed, generation, forgeSharedPackages) {
+  if (typeof forgeSharedPackages !== 'function') throw new Error('Build DSH artifacts with the shared-package policy before preparing the preview')
   if (!generation) throw new Error('Build DSH runtime artifacts with Forge support before preparing the preview')
   const hostPackages = {}
   for (const [path, bytes] of Object.entries(packed.files)) {
@@ -10,5 +11,5 @@ export function imageTarget(packed, generation) {
   if (!Object.keys(hostPackages).length) throw new Error('No base-image package versions found')
   const manifest = JSON.parse(new TextDecoder().decode(packed.files['config/vfs-manifest.json']))
   if (!manifest.clientPackages || !Object.keys(manifest.clientPackages).length) throw new Error('Build the Client package roster before preparing the preview')
-  return { protocol: 1, generation, hostPackages, clientPackages: manifest.clientPackages }
+  return { protocol: 1, generation, sharedPackages: forgeSharedPackages(hostPackages, manifest.clientPackages), hostPackages, clientPackages: manifest.clientPackages }
 }

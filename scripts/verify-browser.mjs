@@ -18,10 +18,10 @@ const { chromium } = await import(pathToFileURL(resolve(dshRoot, 'apps/web/node_
 const site = resolve(root, '.data/preview/site')
 const target = JSON.parse(await readFile(resolve(root, '.data/preview/target.json'), 'utf8'))
 const { packRepositoryImage } = await import(pathToFileURL(resolve(dshRoot, 'packages/experimental/webworker-packer/lib/index.js')).href)
-const { IMAGE_FILE_NAME, FORGE_GENERATION } = await import(pathToFileURL(resolve(dshRoot, 'packages/experimental/webworker-runtime/lib/index.js')).href)
+const { IMAGE_FILE_NAME, FORGE_GENERATION, forgeSharedPackages } = await import(pathToFileURL(resolve(dshRoot, 'packages/experimental/webworker-runtime/lib/index.js')).href)
 const packed = packRepositoryImage(dshRoot, 'web')
 assert.deepEqual(packed.missing, [])
-assert.deepEqual(target, imageTarget(packed, FORGE_GENERATION), 'Prepared target differs from selected DSH image; run preview:prepare for this checkout')
+assert.deepEqual(target, imageTarget(packed, FORGE_GENERATION, forgeSharedPackages), 'Prepared target differs from selected DSH image; run preview:prepare for this checkout')
 const images = new Map([[`/preview/${IMAGE_FILE_NAME}`, packed.image], ...packed.lazyArchives.map(archive => [`/preview/${archive.name}`, archive.image])])
 const temporary = await mkdtemp(join(tmpdir(), 'dsh-forge-browser-'))
 const logs = []

@@ -10,6 +10,7 @@ import { overrideFixtures, verifyBundleOverrides } from './verify-bundle-overrid
 import { dnsFixtures, unsupportedNetName, verifyOptionalDns } from './verify-optional-dns.mjs'
 import { v8Fixtures, verifyOptionalV8 } from './verify-optional-v8.mjs'
 import { verifyContextPlugin } from './verify-context-plugin.mjs'
+import { dependencyFixtures, isolatedDependencyName, verifyDependencyIsolation } from './verify-dependency-isolation.mjs'
 import { once } from 'node:events'
 import { createServer } from 'node:http'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -32,10 +33,10 @@ const previewRoot = resolve(values['preview-root'] ?? resolve(root, '.data/previ
 const site = resolve(previewRoot, 'site')
 const target = JSON.parse(await readFile(resolve(previewRoot, 'target.json'), 'utf8'))
 const { packRepositoryImage } = await import(pathToFileURL(resolve(dshRoot, 'packages/experimental/webworker-packer/lib/index.js')).href)
-const { IMAGE_FILE_NAME, FORGE_GENERATION } = await import(pathToFileURL(resolve(dshRoot, 'packages/experimental/webworker-runtime/lib/index.js')).href)
+const { IMAGE_FILE_NAME, FORGE_GENERATION, forgeSharedPackages } = await import(pathToFileURL(resolve(dshRoot, 'packages/experimental/webworker-runtime/lib/index.js')).href)
 const packed = packRepositoryImage(dshRoot, 'web')
 assert.deepEqual(packed.missing, [])
-assert.deepEqual(target, imageTarget(packed, FORGE_GENERATION), 'Prepared target differs from selected DSH image; run preview:prepare for this checkout')
+assert.deepEqual(target, imageTarget(packed, FORGE_GENERATION, forgeSharedPackages), 'Prepared target differs from selected DSH image; run preview:prepare for this checkout')
 const images = new Map([[`/preview/${IMAGE_FILE_NAME}`, packed.image], ...packed.lazyArchives.map(archive => [`/preview/${archive.name}`, archive.image])])
 const temporary = await mkdtemp(join(tmpdir(), 'dsh-forge-hub-'))
 const fixtureName = 'forge-hub-acceptance-plugin'
@@ -66,6 +67,7 @@ const frontend = createServer((request, response) => {
 let backend
 let whaleBuildFailure
 let netBuildFailure
+const dependencyBuilds = new Map()
 let browser
 try {
   frontend.listen(0, values.host === '127.0.0.1' ? '127.0.0.1' : '0.0.0.0')
@@ -86,6 +88,7 @@ try {
     const response = await handler(request)
     if (build?.spec === `${unsupportedNetName}@1.0.0`) netBuildFailure = { status: response.status, body: await response.clone().json() }
     if (build?.spec === 'dsh-whale-widget@0.4.2') whaleBuildFailure = { status: response.status, body: await response.clone().json() }
+    if (build?.spec?.startsWith('forge-hub-dependency-')) dependencyBuilds.set(build.spec, { status: response.status, body: await response.clone().json() })
     return response
   }, { hostname: '127.0.0.1', port: 0 })
   browser = await chromium.launch({ channel: 'chrome', headless: true })
@@ -262,6 +265,7 @@ try {
   assert.equal(loaderEntries.entries.filter(entry => entry.name === fixtureName).length, 1)
   assert.deepEqual(JSON.parse((await configCommand()).result.text), fixtureConfig)
   console.log('Hub fixture updated through @latest with configuration retained')
+  const dependencyIsolation = await verifyDependencyIsolation({ page, hub, waitTask, rpc, session, target, builds: dependencyBuilds })
   const optionalV8 = await verifyOptionalV8({ page, hub, waitTask, rpc, session })
   const optionalDns = await verifyOptionalDns({ page, hub, waitTask, rpc, session, netBuildFailure: () => netBuildFailure })
   const whaleCreated = await hub('/install', { repo: 'dsh-whale-widget', source: 'custom', installChannel: 'npm', lang: 'en', version: '0.4.2' })
@@ -301,7 +305,7 @@ try {
   assert.equal(workers, 1)
   assert.equal(await page.evaluate(() => performance.timeOrigin), timeOrigin)
   const observed = {
-    httpPort, mobile, industry, bundleOverrides, optionalDns, optionalV8, contextPlugin, ...extra, package: 'dsh-plugin@2.2.1', hostRoutes: true, clientFactory: true, settingsSection: true,
+    httpPort, mobile, industry, bundleOverrides, dependencyIsolation, optionalDns, optionalV8, contextPlugin, ...extra, package: 'dsh-plugin@2.2.1', hostRoutes: true, clientFactory: true, settingsSection: true,
     catalogThroughCurl: true, catalogListVisible: true, releaseAgeThroughHttps: true,
     marketplaceReopened: true, nativeManagerPackagesAvailable: true, marketplacePreservedAfterPluginInstall: true,
     marketplaceUiInstall: true, nativeToggleSingleRegistration: true,
@@ -400,6 +404,7 @@ async function startRegistry() {
   const directory = join(temporary, 'npm-fixture')
   await mkdir(join(directory, 'package'), { recursive: true })
   const fixture = { name: fixtureName, version: '1.0.0', main: 'index.js',
+    peerDependencies: { [isolatedDependencyName]: target.hostPackages[isolatedDependencyName], '@deepseek-ai/cordis': target.hostPackages['@deepseek-ai/cordis'] },
     dsh: { bundle: { patch: './cordis.patch.yml' }, compatibility: { dshReleases: { '0.2.1-rc.2': 'compatible' } }, manifestVersion: 1 },
   }
   await writeFile(join(directory, 'package/package.json'), JSON.stringify(fixture))
@@ -408,6 +413,8 @@ async function startRegistry() {
     const { existsSync, readFileSync } = require('node:fs');
     const { dirname, join } = require('node:path');
     const observedResources = new Set();
+    const equal = require('fast-deep-equal'); const { Context } = require('@deepseek-ai/cordis');
+    ctx.effect(() => ctx.commands.register({ name: 'forge-hub-host-dependency', description: 'Inspect the real shared host dependency', handler: () => ({ kind: 'success', text: JSON.stringify({ hostEqual: equal({ nested: [1, 2] }, { nested: [1, 2] }), hostUnequal: equal({ nested: [1, 2] }, { nested: [1, 3] }), coreSameInstance: ctx instanceof Context }) }) }));
     ctx.effect(() => ctx.commands.register({ name: 'forge-hub-industry', description: 'Inspect packaged industry skills and tools', handler: async () => {
       const summaries = (await ctx.skills.list({ cwd: '/dsh/workspace' })).filter(skill => ['company-research-method', 'industry-research-method'].includes(skill.name));
       const skills = await Promise.all(summaries.map(async summary => {
@@ -431,11 +438,11 @@ async function startRegistry() {
   await tar.c({ cwd: directory, file: tarballPath, gzip: true }, ['package'])
   const tarball = await readFile(tarballPath)
   const fixturePackages = new Map()
-  for (const fixture of [...overrideFixtures(fixtureName), ...dnsFixtures(), ...v8Fixtures()]) {
+  for (const fixture of [...overrideFixtures(fixtureName), ...dnsFixtures(), ...v8Fixtures(), ...dependencyFixtures(target)]) {
     const folder = join(temporary, `${fixture.manifest.name}-${fixture.manifest.version}`)
     await mkdir(join(folder, 'package'), { recursive: true })
     await writeFile(join(folder, 'package/package.json'), JSON.stringify(fixture.manifest))
-    await writeFile(join(folder, 'package/cordis.patch.yml'), fixture.patch)
+    if (fixture.patch !== undefined) await writeFile(join(folder, 'package/cordis.patch.yml'), fixture.patch)
     await writeFile(join(folder, 'package/index.js'), fixture.source)
     const archive = join(folder, 'fixture.tgz')
     await tar.c({ cwd: folder, file: archive, gzip: true }, ['package'])
@@ -444,6 +451,7 @@ async function startRegistry() {
     fixturePackages.set(fixture.manifest.name, versions)
   }
   let registryUrl
+  let ordinaryMetadata
   const server = createServer((request, response) => {
     void (async () => {
       try {
@@ -457,7 +465,12 @@ async function startRegistry() {
         if (fixtures && path.startsWith(`/${packageName}/-/`)) {
           const version = path.slice(`/${packageName}/-/`.length).replace(/\.tgz$/, '')
           const fixture = fixtures.get(version)
-          response.writeHead(fixture ? 200 : 404, { 'content-type': 'application/octet-stream' }); response.end(fixture?.bytes); return
+          if (fixture || packageName !== isolatedDependencyName) {
+            response.writeHead(fixture ? 200 : 404, { 'content-type': 'application/octet-stream' }); response.end(fixture?.bytes); return
+          }
+          const upstream = await fetch(`https://registry.npmjs.org${request.url}`)
+          response.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/octet-stream' })
+          response.end(new Uint8Array(await upstream.arrayBuffer())); return
         }
         if (fixtures) {
           const latest = [...fixtures.keys()].at(-1)
@@ -465,8 +478,16 @@ async function startRegistry() {
             tarball: `${registryUrl}/${packageName}/-/${version}.tgz`, integrity: `sha512-${createHash('sha512').update(fixture.bytes).digest('base64')}`,
           } }]))
           const version = path.slice(packageName.length + 2)
-          const metadata = { name: packageName, 'dist-tags': { latest }, versions }
-          const value = version ? versions[version === 'latest' ? latest : version] : metadata
+          let metadata = { name: packageName, 'dist-tags': { latest }, versions }
+          if (packageName === isolatedDependencyName) {
+            ordinaryMetadata ??= fetch(`https://registry.npmjs.org/${packageName}`, { signal: AbortSignal.timeout(30000) }).then(async upstream => {
+              assert.equal(upstream.status, 200)
+              return upstream.json()
+            })
+            const upstream = await ordinaryMetadata
+            metadata = { ...upstream, versions: { ...upstream.versions, ...versions } }
+          }
+          const value = version ? metadata.versions[metadata['dist-tags'][version] ?? version] : metadata
           response.writeHead(value ? 200 : 404, { 'content-type': 'application/json' }); response.end(JSON.stringify(value ?? { error: 'Version not found' })); return
         }
         if (path === '/fixture.tgz') {

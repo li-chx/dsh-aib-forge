@@ -22,7 +22,7 @@ Forge 是 DSH 专用的插件构建与分发服务。前端发起插件安装、
 
 所有 JSON 请求和响应带明确版本或代际。预期错误返回 `{ "error": { "code": "...", "message": "..." } }`，不得根据 message 字符串分派错误。
 
-`GET /v1/target` 返回服务端目标 `{ protocol: 1, generation, hostPackages, clientPackages? }`，其中 hostPackages 是宿主提供包名到准确版本的映射；可选 clientPackages 是静态网页 seed 提供的 Client 包准确版本，缺省为空。服务端配置决定该映射，不能被请求覆盖。
+`GET /v1/target` 返回服务端目标 `{ protocol: 1, generation, sharedPackages, hostPackages, clientPackages? }`，其中 hostPackages 是宿主包名到准确版本的库存映射，不表示所有普通依赖都强制共享；必需的 sharedPackages 由所选 DSH 构建导出的 forgeSharedPackages() 生成，覆盖 DSH/Cordis、Client seed 和 Worker 静态替身；可选 clientPackages 是静态网页 seed 提供的 Client 包准确版本，缺省为空。服务端配置决定该映射，不能被请求覆盖。
 
 `POST /v1/builds` 接受：
 
@@ -64,7 +64,9 @@ Forge 是 DSH 专用的插件构建与分发服务。前端发起插件安装、
 }
 ```
 
-`packages[].dependencies` 将引用的包名映射到此清单中的 package id。宿主包引用保留裸包名，并必须出现在 Manifest.hostPackages 中，值为准确版本。仅由 Client 提供的 peer 依赖单独记入 Manifest.clientPackages，按声明版本验证，不能由 Host 代码 import/require；两个名册中的包都禁止被插件替换。外部依赖不能被内联进插件包；允许包内模块打包。首版明确拒绝动态引用、子路径导出、未支持的原生模块、安装脚本依赖，以及 require 消费者依赖不同于统一 import 入口的 CommonJS 实现，并报告具体原因。包入口统一选择 browser/import 条件导出；旧式声明按 browser、module、main 顺序选择，ES import 消费者可以使用双入口包。
+`packages[].dependencies` 将引用的包名映射到此清单中的 package id。宿主包引用保留裸包名，并必须出现在 Manifest.hostPackages 中，值为准确版本。仅由 Client 提供的 peer 依赖单独记入 Manifest.clientPackages，按声明版本验证，不能由 Host 代码 import/require；根插件不能替换两个名册中的同名包；固定共享包不允许重映射。普通 dependencies 始终按隔离安装树解析私有实例，即使宿主版本满足范围也不复用，因为库存没有该宿主实例的 peer 绑定信息。同内容、同依赖身份仍可复用产物。外部依赖不能被内联进插件包；允许包内模块打包。首版明确拒绝动态引用、子路径导出、未支持的原生模块、安装脚本依赖，以及 require 消费者依赖不同于统一 import 入口的 CommonJS 实现，并报告具体原因。包入口统一选择 browser/import 条件导出；旧式声明按 browser、module、main 顺序选择，ES import 消费者可以使用双入口包。
+
+peerDependencies 与 dependencies 分别验证，同名声明必须同时满足同一供应实例。target peer 必须符合宿主或页面提供的准确版本，不通过自动安装副本消除冲突。非 target peer 只使用消费者安装树中已经存在的供应者，缺失报 PEER_MISSING；未被 Host 导入且没有同名必需 dependency 的 optional peer 可以缺失；安装树已提供的 optional peer 仍须满足声明范围。target 已提供的 optional peer 仍校验版本并记入清单，包括预构建 Client 使用的页面依赖。消费者已提供同名私有依赖时，下游不能偷偷将该 peer 改绑宿主，当前明确报 PEER_CONTEXT_UNSUPPORTED，不实现完整 peer 上下文合成。Client 预构建产物仍使用页面全局模块表，Worker 的包级私有映射不等于 Client 外部依赖映射；固定 seed 校验及 client.external 不支持规则保持不变。
 
 `GET /v1/artifacts/<objectKey>` 返回字节。objectKey 必须来自清单，严格验证路径和哈希。后端不得读取或发布请求指定的任意本机文件。服务端默认回环监听；允许的前端 Origin 由配置明确指定。
 

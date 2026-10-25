@@ -17,7 +17,7 @@ assert.equal(typeof cordis.version, 'string')
 
 const directory = await mkdtemp(join(tmpdir(), 'forge-published-'))
 try {
-  const target = { protocol: 1 as const, generation, hostPackages: { '@deepseek-ai/cordis': cordis.version } }
+  const target = { protocol: 1 as const, generation, sharedPackages: ['@deepseek-ai/cordis'], hostPackages: { '@deepseek-ai/cordis': cordis.version } }
   const store = new FileArtifactStore(join(directory, 'objects'))
   const executor = new ForgeCompiler({ target, store, resolver: new PnpmPackageResolver({ executable: 'pnpm', timeoutMs: 120000, registry: 'https://registry.npmjs.org/' }), lowerModule: await loadDshLowerer(resolve(dshRoot, 'packages/experimental/webworker-runtime/lib/index.js')), allowHostPatchUpgrade: ['@deepseek-ai/cordis'] })
   const server = await startForgeServer(createForgeHandler({ target, executor, store, allowedOrigins: [], maxRequestBytes: 8192, maxConcurrentBuilds: 1 }), { hostname: '127.0.0.1', port: 0 })

@@ -77,7 +77,7 @@ test('published nested entry resolves packaged resources from import.meta.url an
     resolve: (...args) => resolver.resolve(...args),
   }
   const store = new FileArtifactStore(join(directory, 'store'))
-  const compiler = new ForgeCompiler({ target: { protocol: 1, generation: 'test-resources', hostPackages: {} }, resolver: source, store, lowerModule })
+  const compiler = new ForgeCompiler({ target: { protocol: 1, generation: 'test-resources', sharedPackages: [], hostPackages: {} }, resolver: source, store, lowerModule })
   const request = { protocol: 1 as const, generation: 'test-resources', pluginId: 'resource-fixture', spec: 'resource-fixture@1.0.0' }
   const first = await compiler.buildPackage(request)
   const pkg = first.packages[0]!
@@ -107,7 +107,7 @@ test('root index Client assets and resources conflicting with generated entry ar
       async prepare() {},
       async resolve() { return { directory, entry: join(directory, 'index.js'), outputEntry: 'lib/index.js', name: 'sample', version: '1.0.0', dependencies: {}, peerDependencies: {}, assets: { [resource]: new Uint8Array([1]) } } },
     }
-    const compiler = new ForgeCompiler({ target: { protocol: 1, generation: 'test-resources', hostPackages: {} }, resolver, store: new FileArtifactStore(join(directory, 'store')), lowerModule })
+    const compiler = new ForgeCompiler({ target: { protocol: 1, generation: 'test-resources', sharedPackages: [], hostPackages: {} }, resolver, store: new FileArtifactStore(join(directory, 'store')), lowerModule })
     await assert.rejects(compiler.buildPackage({ protocol: 1, generation: 'test-resources', pluginId: 'sample', spec: 'sample@1.0.0' }), { code: 'RESOURCE_ENTRY_COLLISION' })
   }
 })
