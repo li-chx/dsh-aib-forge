@@ -262,14 +262,14 @@ test('published package HTTP builds preserve the bundle patch and Client bytes w
   assert.equal(result.status, 200)
   const manifest = await result.json()
   const pkg = manifest.packages[0]
-  assert.equal(manifest.plugin.id, 'my-plugin'); assert.equal(pkg.entry, 'index.js')
-  assert.deepEqual(pkg.metadata, { repository: { url: 'git+https://example.test/published.git' }, dsh: { bundle: { patch: './cordis.patch.yml' }, client: { inject: ['@deepseek-ai/dsh-client-locale'], platform: 'web' } }, exports: { '.': './index.js', './package.json': './package.json', './cordis.patch.yml': './cordis.patch.yml', './client': './client/client.js' } })
-  assert.deepEqual(pkg.files.map((file: { path: string }) => file.path), ['client/client.js', 'cordis.patch.yml', 'index.js'])
+  assert.equal(manifest.plugin.id, 'my-plugin'); assert.equal(pkg.entry, 'lib/index.js')
+  assert.deepEqual(pkg.metadata, { repository: { url: 'git+https://example.test/published.git' }, dsh: { bundle: { patch: './cordis.patch.yml' }, client: { inject: ['@deepseek-ai/dsh-client-locale'], platform: 'web' } }, exports: { '.': './lib/index.js', './package.json': './package.json', './cordis.patch.yml': './cordis.patch.yml', './client': './client/client.js' } })
+  assert.deepEqual(pkg.files.map((file: { path: string }) => file.path), ['client/client.js', 'cordis.patch.yml', 'lib/index.js'])
   for (const [path, expected] of [['client/client.js', client], ['cordis.patch.yml', patch]]) {
     const file = pkg.files.find((file: { path: string }) => file.path === path)
     assert.equal(new TextDecoder().decode(await store.get(file.objectKey)), expected)
   }
-  const host = pkg.files.find((file: { path: string }) => file.path === 'index.js')
+  const host = pkg.files.find((file: { path: string }) => file.path === pkg.entry)
   assert.match(new TextDecoder().decode(await store.get(host.objectKey)), /require\("node:path"\)/)
   assert.deepEqual(await readdir(work), [])
   const latest = await handler(new Request('http://localhost/v1/packages/builds', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ protocol: 1, generation: target.generation, pluginId: 'my-plugin', spec: 'published-plugin@latest' }) }))

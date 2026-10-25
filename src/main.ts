@@ -15,6 +15,7 @@ const { values } = parseArgs({ options: {
   storage: { type: 'string', default: '.data/artifacts' }, origin: { type: 'string', multiple: true, default: [] },
   'allow-host-patch-upgrade': { type: 'string', multiple: true, default: [] },
   pnpm: { type: 'string', default: 'pnpm' }, registry: { type: 'string', default: 'https://registry.npmjs.org/' },
+  'max-resource-files': { type: 'string', default: '1000' }, 'max-resource-bytes': { type: 'string', default: String(32 * 1024 * 1024) },
   'install-timeout-ms': { type: 'string', default: '120000' }, 'max-request-bytes': { type: 'string', default: '2097152' }, 'max-builds': { type: 'string', default: '2' },
 } })
 if (!values.target || (!values.transformer && !values['dsh-root'])) throw new Error('Usage: pnpm dev --target target.json --dsh-root ../deepseek-harness --origin http://localhost:36935')
@@ -25,7 +26,7 @@ const port = number(values.port, 'port')
 if (port > 65535) throw new Error('Port must be at most 65535')
 const transformerPath = values.transformer ?? resolve(values['dsh-root']!, 'packages/experimental/webworker-runtime/lib/index.js')
 const store = new FileArtifactStore(resolve(values.storage))
-const executor = new ForgeCompiler({ target, store, allowHostPatchUpgrade: values['allow-host-patch-upgrade'], resolver: new PnpmPackageResolver({ executable: values.pnpm, registry: values.registry, timeoutMs: number(values['install-timeout-ms'], 'install timeout') }), lowerModule: await loadDshLowerer(transformerPath) })
+const executor = new ForgeCompiler({ target, store, allowHostPatchUpgrade: values['allow-host-patch-upgrade'], resolver: new PnpmPackageResolver({ executable: values.pnpm, registry: values.registry, timeoutMs: number(values['install-timeout-ms'], 'install timeout'), maxResourceFiles: number(values['max-resource-files'], 'resource files'), maxResourceBytes: number(values['max-resource-bytes'], 'resource bytes') }), lowerModule: await loadDshLowerer(transformerPath) })
 const running = await startForgeServer(createForgeHandler({ target, executor, store, allowedOrigins: values.origin, maxRequestBytes: number(values['max-request-bytes'], 'request size'), maxConcurrentBuilds: number(values['max-builds'], 'concurrency'), onError: error => console.error(error) }), { hostname: values.host, port })
 console.log(`DSH Forge ${target.generation} listening at ${running.url}`)
 for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => { void running.close().catch(error => { console.error(error); process.exitCode = 1 }) })

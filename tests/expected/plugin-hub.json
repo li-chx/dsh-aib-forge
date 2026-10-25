@@ -21,11 +21,41 @@
     "removedStylesAndControls": true,
     "removedHostRoute": true
   },
+  "industry": {
+    "package": "dsh-industry-research@0.3.23",
+    "status": "active",
+    "skills": [
+      {
+        "name": "company-research-method",
+        "provider": "industry-research",
+        "bodySha256": "22c5477b76841c752d082d66348d44b2e7231bb0b8473deb8ae96e3764a02311"
+      },
+      {
+        "name": "industry-research-method",
+        "provider": "industry-research",
+        "bodySha256": "e51ddb67b694a8e3737377bad36f886b8e8a05f82d8c3865bdad97db4c2d4021"
+      }
+    ],
+    "relativeReferenceReadable": true,
+    "tools": [
+      "company_scan",
+      "industry_map",
+      "industry_report",
+      "industry_track"
+    ],
+    "remoteCatalogVisible": true,
+    "repeatedUpdates": 2,
+    "singleLoaderEntry": true,
+    "configurationPathOverride": false,
+    "removedSkills": true,
+    "removedTools": true,
+    "removedResourceFiles": true
+  },
   "router": {
     "package": "@ljwei-stak/dsh-model-router@0.25.1",
     "hostCommand": true,
     "clientWorkspace": true,
-    "hostVersion": null,
+    "hostVersion": "0.25.1",
     "singleRegistration": true,
     "removed": true,
     "modelRequest": false,

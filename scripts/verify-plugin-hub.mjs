@@ -5,6 +5,7 @@ import assert from 'node:assert/strict'
 import { verifyHttpPort } from './verify-http-port.mjs'
 import { verifyMobilePlugin } from './verify-mobile-plugin.mjs'
 import { verifyExtraPlugins } from './verify-extra-plugins.mjs'
+import { verifyIndustryPlugin } from './verify-industry-plugin.mjs'
 import { once } from 'node:events'
 import { createServer } from 'node:http'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -268,6 +269,7 @@ try {
   assert.equal(await page.locator('.dshwv-root').count(), 0)
   assert.equal((await command()).result.text, 'hub child active')
   console.log('Whale DNS requirement rejected without activation; existing command preserved')
+  const industry = await verifyIndustryPlugin({ page, hub, waitTask, rpc, session })
   const removing = await hub('/uninstall', { name: fixtureName })
   const removeTask = await waitTask(removing.task)
   assert.equal(removeTask.status, 'done', JSON.stringify(removeTask))
@@ -279,7 +281,7 @@ try {
   assert.equal(workers, 1)
   assert.equal(await page.evaluate(() => performance.timeOrigin), timeOrigin)
   const observed = {
-    httpPort, mobile, ...extra, package: 'dsh-plugin@2.2.1', hostRoutes: true, clientFactory: true, settingsSection: true,
+    httpPort, mobile, industry, ...extra, package: 'dsh-plugin@2.2.1', hostRoutes: true, clientFactory: true, settingsSection: true,
     catalogThroughCurl: true, catalogListVisible: true, releaseAgeThroughHttps: true,
     marketplaceReopened: true, nativeManagerPackagesAvailable: true, marketplacePreservedAfterPluginInstall: true,
     marketplaceUiInstall: true, nativeToggleSingleRegistration: true,
@@ -382,7 +384,22 @@ async function startRegistry() {
   }
   await writeFile(join(directory, 'package/package.json'), JSON.stringify(fixture))
   await writeFile(join(directory, 'package/cordis.patch.yml'), `- insert:\n    - id: ${fixtureName}\n      name: ${fixtureName}\n      config: ${JSON.stringify(fixtureConfig)}\n`)
-  await writeFile(join(directory, 'package/index.js'), `const { createHash } = require('node:crypto'); exports.name = '${fixtureName}'; exports.inject = ['commands']; exports.apply = (ctx, config) => {
+  await writeFile(join(directory, 'package/index.js'), `const { createHash } = require('node:crypto'); exports.name = '${fixtureName}'; exports.inject = ['commands', 'skills', 'tools']; exports.apply = (ctx, config) => {
+    const { existsSync, readFileSync } = require('node:fs');
+    const { dirname, join } = require('node:path');
+    const observedResources = new Set();
+    ctx.effect(() => ctx.commands.register({ name: 'forge-hub-industry', description: 'Inspect packaged industry skills and tools', handler: async () => {
+      const summaries = (await ctx.skills.list({ cwd: '/dsh/workspace' })).filter(skill => ['company-research-method', 'industry-research-method'].includes(skill.name));
+      const skills = await Promise.all(summaries.map(async summary => {
+        const skill = await ctx.skills.get(summary.name, { cwd: '/dsh/workspace' });
+        observedResources.add(skill.path);
+        const referencePath = skill.name === 'industry-research-method' ? join(dirname(skill.path), 'references/frameworks.md') : undefined;
+        if (referencePath) observedResources.add(referencePath);
+        return { name: skill.name, provider: skill.provider, path: skill.path, content: skill.content, reference: referencePath ? readFileSync(referencePath, 'utf8') : null };
+      }));
+      const tools = ctx.tools.schemas().map(tool => tool.name).filter(name => ['industry_map', 'industry_track', 'company_scan', 'industry_report'].includes(name)).sort();
+      return { kind: 'success', text: JSON.stringify({ skills, tools, resources: [...observedResources].map(path => ({ path, exists: existsSync(path) })) }) };
+    } }));
     ctx.effect(() => ctx.commands.register({ name: 'forge-hub-child', description: 'Forge acceptance command', handler: () => ({ kind: 'success', text: 'hub child active' }) }));
     ctx.effect(() => ctx.commands.register({ name: 'forge-hub-config', description: 'Forge configuration acceptance command', handler: () => ({ kind: 'success', text: JSON.stringify(config) }) }));
     ctx.effect(() => ctx.commands.register({ name: 'forge-hub-sha256', description: 'Forge SHA-256 acceptance command', handler: () => ({ kind: 'success', text: createHash('sha256').update('forge hub').digest('hex') }) }));

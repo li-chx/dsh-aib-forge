@@ -1,12 +1,14 @@
 /** Isolated pnpm installation without dependency lifecycle scripts. */
 import { spawn } from 'node:child_process'
 import { readFile, realpath, stat, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, relative, resolve } from 'node:path'
 import { exports as resolveExports } from 'resolve.exports'
 import semver from 'semver'
 import { z } from 'zod'
 import { readPublishedAssets } from './package-assets.js'
 import type { PublishedAssets } from './package-assets.js'
+import { collectPackageResources, resolveResourceLimits, validateResourcePath } from './package-resources.js'
+import type { ResourceLimits } from './package-resources.js'
 import { ForgeError, packageName } from './protocol.js'
 
 const manifestSchema = z.object({
@@ -17,7 +19,7 @@ const manifestSchema = z.object({
   scripts: z.record(z.string(), z.string()).optional(),
 }).passthrough()
 /** Manifest and entry resolved for an installed npm package. */
-export interface ResolvedPackage extends Partial<PublishedAssets> { directory: string; entry: string; name: string; version: string; dependencies: Record<string, string>; peerDependencies: Record<string, string>; requireCompatible?: boolean }
+export interface ResolvedPackage extends Partial<PublishedAssets> { directory: string; entry: string; outputEntry?: string; name: string; version: string; dependencies: Record<string, string>; peerDependencies: Record<string, string>; requireCompatible?: boolean }
 /** Dependency installation and package lookup, replaceable independently. */
 export interface PackageResolver {
   prepare(directory: string, dependencies: Record<string, string>): Promise<void>
@@ -31,10 +33,11 @@ export function validateDependencies(dependencies: Record<string, string>): void
   }
 }
 /** pnpm subprocess deadline, executable and registry are server-owned. */
-export interface PnpmResolverOptions { executable: string; timeoutMs: number; registry: string }
+export interface PnpmResolverOptions extends Partial<ResourceLimits> { executable: string; timeoutMs: number; registry: string }
 /** Registry dependency resolver with lifecycle scripts and automatic peers disabled. */
 export class PnpmPackageResolver implements PackageResolver {
-  constructor(private readonly options: PnpmResolverOptions) {}
+  private readonly resourceLimits: ResourceLimits
+  constructor(private readonly options: PnpmResolverOptions) { this.resourceLimits = resolveResourceLimits(options) }
   /** Resolve the published endpoint's supported tag to an exact registry version before installation. */
   async resolveTag(name: string, tag: 'latest'): Promise<string> {
     packageName.parse(name)
@@ -87,6 +90,7 @@ export class PnpmPackageResolver implements PackageResolver {
       if (search === root || parent === search) break
       search = parent
     }
+    if (directory && directory !== root && !directory.startsWith(root + '/')) throw new ForgeError('SOURCE_PATH_ESCAPE', `Installed package ${name} escapes its workspace`)
     if (!directory) throw new ForgeError('DEPENDENCY_MISSING', `Cannot resolve installed package ${name}`)
     const parsed = manifestSchema.safeParse(JSON.parse(await readFile(join(directory, 'package.json'), 'utf8')))
     if (!parsed.success) throw new ForgeError('PACKAGE_INVALID', `Invalid manifest for ${name}: ${parsed.error.message}`)
@@ -119,7 +123,13 @@ export class PnpmPackageResolver implements PackageResolver {
       catch (error) { if (!(error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR'))) throw error }
     }
     if (!file) throw new ForgeError('PACKAGE_ENTRY_UNSUPPORTED', `Cannot find entry for ${name}`)
-    const published = await readPublishedAssets(directory, manifest.name, manifest)
-    return { directory, entry: file, requireCompatible, name: manifest.name, version: manifest.version, dependencies: manifest.dependencies ?? {}, peerDependencies: manifest.peerDependencies ?? {}, ...published }
+    const actualEntry = await realpath(file)
+    if (!actualEntry.startsWith(directory + '/')) throw new ForgeError('SOURCE_PATH_ESCAPE', `${name} entry escapes its package`)
+    const sourceEntry = relative(directory, file).replaceAll('\\', '/')
+    const outputEntry = /\.[^/.]+$/.test(sourceEntry) ? sourceEntry.replace(/\.[^/.]+$/, '.js') : `${sourceEntry}.js`
+    validateResourcePath(outputEntry)
+    const published = await readPublishedAssets(directory, manifest.name, manifest, outputEntry, this.resourceLimits)
+    const assets = await collectPackageResources(directory, new Set([sourceEntry, outputEntry]), published?.assets ?? {}, this.resourceLimits)
+    return { directory, entry: file, outputEntry, requireCompatible, name: manifest.name, version: manifest.version, dependencies: manifest.dependencies ?? {}, peerDependencies: manifest.peerDependencies ?? {}, ...published, assets }
   }
 }

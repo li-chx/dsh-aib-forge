@@ -1,11 +1,13 @@
 /** Preserve the supported published DSH bundle and prebuilt Client entry. */
-import { readFile, realpath } from 'node:fs/promises'
+import { readFile, realpath, stat } from 'node:fs/promises'
 import { resolve, relative, isAbsolute } from 'node:path'
 import { isAlias, isMap, isScalar, isSeq, parseDocument, visit } from 'yaml'
 import { exports as resolveExports } from 'resolve.exports'
 import { z } from 'zod'
 import { ForgeError, packageName, relativePath } from './protocol.js'
 import type { PackageMetadata } from './protocol.js'
+import { checkResourceBudget, validateResourcePath } from './package-resources.js'
+import type { ResourceLimits } from './package-resources.js'
 import { applyClientCompatibility } from './client-compatibility.js'
 
 // Unknown descriptive fields are stripped; only declarations consumed by this compiler are retained.
@@ -22,12 +24,12 @@ const issueDetails = (error: z.ZodError): string => error.issues.map(issue => `$
 /** Preserved files and the safe metadata that names them. */
 export interface PublishedAssets { metadata: PackageMetadata; assets: Record<string, Uint8Array> }
 /** Read only declared supported assets inside the installed package directory. */
-export async function readPublishedAssets(directory: string, name: string, raw: Record<string, unknown>): Promise<PublishedAssets | undefined> {
+export async function readPublishedAssets(directory: string, name: string, raw: Record<string, unknown>, outputEntry = 'index.js', limits?: ResourceLimits): Promise<PublishedAssets | undefined> {
   if (raw.dsh === undefined && raw.repository === undefined) return undefined
   const dsh = dshSchema.safeParse(raw.dsh === undefined ? {} : raw.dsh)
   if (!dsh.success) throw new ForgeError('BUNDLE_UNSUPPORTED', `Unsupported dsh metadata for ${name}: ${issueDetails(dsh.error)}`)
   const assets: Record<string, Uint8Array> = {}
-  const exports: Record<string, string> = { '.': './index.js', './package.json': './package.json' }
+  const exports: Record<string, string> = { '.': `./${outputEntry}`, './package.json': './package.json' }
   const metadata: PackageMetadata = { ...raw.dsh === undefined ? {} : { dsh: { ...dsh.data.bundle === undefined ? {} : { bundle: dsh.data.bundle }, ...dsh.data.client === undefined ? {} : { client: dsh.data.client } } }, exports }
   if (raw.repository !== undefined) {
     const repository = z.union([z.string().min(1), z.object({ url: z.string().min(1) })]).safeParse(raw.repository)
@@ -36,12 +38,17 @@ export async function readPublishedAssets(directory: string, name: string, raw: 
   }
   const load = async (value: string): Promise<{ path: string; bytes: Uint8Array }> => {
     const path = value.replace(/^\.\//, '')
-    if (!relativePath.safeParse(path).success || path === 'package.json' || path === 'index.js') throw new ForgeError('BUNDLE_UNSUPPORTED', `Unsafe or reserved asset path ${value}`)
+    if (!relativePath.safeParse(path).success || path === 'package.json' || path === 'index.js' || path === outputEntry) throw new ForgeError('BUNDLE_UNSUPPORTED', `Unsafe or reserved asset path ${value}`)
+    validateResourcePath(path)
     let actual: string
     try { actual = await realpath(resolve(directory, path)) }
     catch (error) { throw new ForgeError('BUNDLE_ASSET_MISSING', `Cannot read published asset ${value}: ${error instanceof Error && 'code' in error ? String(error.code) : 'filesystem error'}`) }
     const offset = relative(directory, actual)
     if (offset.startsWith('..') || isAbsolute(offset)) throw new ForgeError('SOURCE_PATH_ESCAPE', `Asset ${value} escapes its package`)
+    if (limits) {
+      const loaded = Object.values(assets).reduce((sum, value) => sum + value.byteLength, 0)
+      checkResourceBudget(Object.keys(assets).length + 1, loaded + (await stat(actual)).size, limits)
+    }
     return { path, bytes: await readFile(actual) }
   }
   if (dsh.data.bundle) {

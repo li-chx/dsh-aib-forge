@@ -8,7 +8,7 @@ import { parse } from 'acorn'
 import { ancestor, simple } from 'acorn-walk'
 import { build, transform } from 'esbuild'
 import semver from 'semver'
-import { ForgeError, parseBuildRequest, parsePackageBuildRequest } from './protocol.js'
+import { ForgeError, parseBuildRequest, parsePackageBuildRequest, relativePath } from './protocol.js'
 import type { BuildExecutor, BuildManifest, BuildRequest, BuildTarget, PackageArtifact, PackageBuildRequest } from './protocol.js'
 import type { ArtifactStore } from './store.js'
 import { sha256 } from './store.js'
@@ -168,6 +168,9 @@ export class ForgeCompiler implements BuildExecutor {
           if (face === 'host') hostPackages[name] = target.hostPackages[name]!
           if (face === 'client') clientPackages[name] = target.clientPackages![name]!
         }
+        const outputEntry = pkg.outputEntry ?? 'index.js'
+        if (!relativePath.safeParse(outputEntry).success || !outputEntry.endsWith('.js') || outputEntry.startsWith('index.js/') || outputEntry.split('/').includes('node_modules')) throw new ForgeError('PACKAGE_ENTRY_UNSUPPORTED', `${pkg.name} has an invalid compiled entry ${outputEntry}`)
+        if (Object.keys(pkg.assets ?? {}).some(path => path === 'index.js' || path.startsWith('index.js/') || path === outputEntry || path.startsWith(outputEntry + '/') || outputEntry.startsWith(path + '/'))) throw new ForgeError('RESOURCE_ENTRY_COLLISION', `${pkg.name} resource conflicts with compiled entry ${outputEntry}`)
         const requests = new Set<string>()
         const commonJsRequests = new Set<string>()
         let built
@@ -216,7 +219,7 @@ export class ForgeCompiler implements BuildExecutor {
         // ESM bundling wraps a CommonJS or JSON entry in a default export; require() must retain its raw value.
         const unwrapEntry = entryFormat === 'cjs' || extname(pkg.entry) === '.json'
         let code: string
-        try { code = lowerModule({ filename: '/index.js', source }).code + (unwrapEntry ? '\nmodule.exports = exports.default;' : '') }
+        try { code = lowerModule({ filename: `/${outputEntry}`, source }).code + (unwrapEntry ? '\nmodule.exports = exports.default;' : '') }
         catch (error) { throw new ForgeError('LOWERING_FAILED', error instanceof Error ? error.message : String(error)) }
         const dependencies: Record<string, string> = {}
         for (const name of [...requests].sort()) {
@@ -227,7 +230,7 @@ export class ForgeCompiler implements BuildExecutor {
           dependencies[name] = (await compilePackage(child)).id
         }
         const files = []
-        for (const [path, bytes] of Object.entries({ 'index.js': new TextEncoder().encode(code), ...pkg.assets }).sort(([left], [right]) => left.localeCompare(right))) {
+        for (const [path, bytes] of Object.entries({ [outputEntry]: new TextEncoder().encode(code), ...pkg.assets }).sort(([left], [right]) => left.localeCompare(right))) {
           const hash = sha256(bytes)
           const objectKey = `${target.generation}/objects/${hash}`
           await store.put(objectKey, bytes)
@@ -235,7 +238,7 @@ export class ForgeCompiler implements BuildExecutor {
         }
         const metadata = pkg.metadata === undefined ? {} : { metadata: pkg.metadata }
         const id = sha256(JSON.stringify({ name: pkg.name, version: pkg.version, files, dependencies, ...metadata }))
-        const result: PackageArtifact = { id, name: pkg.name, version: pkg.version, entry: 'index.js', dependencies, files, ...metadata }
+        const result: PackageArtifact = { id, name: pkg.name, version: pkg.version, entry: outputEntry, dependencies, files, ...metadata }
         packages.set(id, result); completed.set(pkg.directory, result); active.delete(pkg.directory)
         return result
       }
