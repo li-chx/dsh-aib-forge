@@ -77,6 +77,12 @@ peerDependencies 与 dependencies 分别验证，同名声明必须同时满足�
 
 该选项表示部署者接受指定宿主包的补丁兼容性，不安装或升级核心。Manifest 仍写入实际宿主版本，前端仍逐项精确匹配。它只改变后端请求准入，不改变转换器、产物生成方式或前端宿主版本，因此不要求更换构建代际。
 
+## 模型源码构建入口
+
+Worker 兼容 CLI 提供 `dsh plugin --profile <profile> build <directory>`。目录相对于调用方 shell 的 cwd 解析，`forge.json` 明确列出插件身份、入口、文件和依赖。命令从调用方的异步文件系统读取选定源码，不递归搜集工作区；协议和代际取自宿主。所有源码读取完成后，通过已注入的 HTTP 提供者调用同一个 `/v1/builds`，随后复用安装器的校验、文件 hook、HMR 与持久化清单。异步读取期间修改 Forge 地址不会改变已发起命令选定的服务器。
+
+源码校验、下载和编译失败不替换当前插件；激活失败沿既有安装结果报告，不承诺恢复旧实例。更新保持 id 与包名，修改源文件后须再次执行构建，禁用状态保留。该入口编译 Host 源码，不新增 authored Client TSX 打包或通用 Node 执行能力。环境提示词通过既有 system-prompt 记录流程告诉模型命令、持久化确认和可用能力，真实工具调用仍经过 Agent 策略与 Session 日志。
+
 ## 已发布 npm 插件
 
 `POST /v1/packages/builds` 接收 `{protocol:1,generation,pluginId,spec}`，例如 `spec: "dsh-plugin@2.2.1"`。spec 仅允许 npm 包名及可选 semver 版本范围，省略范围使用 `*`；额外支持 `@latest`，先查询 registry 标签对应的准确版本再安装，不放宽源码请求中的依赖范围校验。不接受文件路径、URL、别名或其他 dist-tag。后端在隔离目录解析已发布入口，通过同一 Host 编译流程生成清单。

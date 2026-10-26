@@ -43,6 +43,18 @@ The default listener is `http://127.0.0.1:36936`, with objects under `.data/arti
 
 `--registry` selects the npm registry, `--pnpm` its executable, `--install-timeout-ms` its deadline, `--max-request-bytes` the source upload bound, and `--max-builds` the concurrent build bound. Builds create fresh temporary workspaces and remove them on success or failure. Package installation scripts are disabled. Forge's own esbuild installation is approved in `pnpm-workspace.yaml`; that does not approve plugin installation scripts.
 
+## Model-authored Host sources
+
+Inside the configured DSH Worker shell, a model can write a source directory and invoke:
+
+```sh
+dsh plugin --profile web build ./greeting-source
+```
+
+The directory's `forge.json` supplies `id`, `name`, `version`, `entry` and an explicit `files` array, plus optional dependency and peer declarations. The Worker reads these files from its VFS and posts their contents to the existing `/v1/builds` endpoint; generation and protocol come from the running host. Filesystem reads and HTTP requests use the invocation's filesystem and configured HTTP provider. Forge returns the same immutable manifest as the page editor, and the Worker applies it through the same installer, HMR and durable catalog. Source text stays in the workspace; generated artifacts stay under the profile's Forge directory. Updating source requires another build command. No npm publication or local Node compiler is required, and authored Client TSX bundles remain outside this source workflow.
+
+The command is part of the Worker compatibility CLI. Existing npm `add`, `update` and `remove` operations retain their behavior. Build or download failure preserves the installed plugin; activation failure reports failure without promising to recover the previous instance. An installed disabled plugin remains disabled. After verifying the result, use the page's explicit save action to drain Session buffers and commit browser storage.
+
 ## Optional host patch admission
 
 Host requirements use their declared semver constraints by default. Operators can opt a named, already provided host package into exact stable patch admission with repeated `--allow-host-patch-upgrade PACKAGE` flags, or `CompilerOptions.allowHostPatchUpgrade`. For example, `--allow-host-patch-upgrade @deepseek-ai/cordis` lets an exact `4.0.1` requirement use the frontend’s existing `4.0.5`. It does not install or upgrade Cordis. The manifest still records the actual `4.0.5`, and the Worker still checks that exact version.
@@ -119,9 +131,12 @@ pnpm preview:prepare --dsh-root /absolute/path/to/deepseek-harness
 pnpm test:browser --dsh-root /absolute/path/to/deepseek-harness --npm
 pnpm test:plugin-hub --dsh-root /absolute/path/to/deepseek-harness
 pnpm test:plugin-hub --dsh-root /absolute/path/to/deepseek-harness --preview-root .data/preview --persistence-only
+pnpm test:plugin-hub --dsh-root /absolute/path/to/deepseek-harness --preview-root .data/preview --source-authoring-only
 ```
 
 `test:browser` uses installed Google Chrome and the selected DSH checkout’s Playwright dependency. It starts temporary HTTP services, verifies v1/v2 commands, no-op file counts, deletion, separate npm dependencies and preflight rejection in the same Worker, then compares `tests/expected/browser-lifecycle.json`. Test artifacts and screenshots remain under ignored `.data/`.
+
+`test:plugin-hub --source-authoring-only` uses a private compatible model HTTP fixture through the real `session/prompt` Agent and tool pipeline. The fixture emits `write`, `bash` and `read` calls to build and update a multi-file TypeScript plugin with a private npm dependency, retains the active revision after a compiler failure, restores both code and source with Forge offline, and removes the plugin through a model tool call. It exports the Session log and checks that tool calls/results and the actual model-visible source-authoring guidance can be reconstructed. It never calls a paid model or changes the preview's default API credentials. Its owner-local snapshot is `tests/expected/source-authoring.json`.
 
 `test:plugin-hub --persistence-only` runs a separate Chrome cold-start lane with a private IndexedDB context. It holds the storage UI module request while the built shell starts, verifies that shell boot remains pending without a missing-loader error, and then releases the request to complete startup. It installs a published fixture, edits its configuration and workspace, names a session, waits for committed storage, and reloads with Forge requests blocked. Later reloads check disabled selection, updated artifacts and uninstall. A second source overlay verifies independent storage, competing tabs verify revision rejection, and an aborted transaction verifies visible failed saving. Corrupting this temporary namespace must prevent boot without replacing the stored bytes. Its owner-local snapshot is `tests/expected/persistence.json`; `.data/forge-storage-*.png` captures the actual saved, conflict, failed and mobile toolbar states. This lane starts fresh Workers; the existing hot-update lane explicitly uses `storage=none` and retains its one-Worker requirement.
 

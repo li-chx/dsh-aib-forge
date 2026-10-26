@@ -1,4 +1,5 @@
 /** Published marketplace acceptance through its real UI, HTTP routes and subprocess install queue. */
+import { verifySourceAuthoring } from './verify-source-authoring.mjs'
 import { resolveDshRoot } from './dsh-path.mjs'
 import { imageTarget } from './image-target.mjs'
 import assert from 'node:assert/strict'
@@ -25,7 +26,7 @@ import { parseArgs } from 'node:util'
 import { FileArtifactStore, ForgeCompiler, PnpmPackageResolver, createForgeHandler, loadDshLowerer, startForgeServer } from '../dist/index.js'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
-const { values } = parseArgs({ options: { 'dsh-root': { type: 'string' }, 'preview-root': { type: 'string' }, 'persistence-only': { type: 'boolean', default: false }, host: { type: 'string', default: '127.0.0.1' }, chinese: { type: 'boolean', default: false }, 'default-id': { type: 'boolean', default: false }, 'ui-install': { type: 'boolean', default: true }, 'native-enable': { type: 'boolean', default: true }, 'refresh-snapshot': { type: 'boolean', default: false } } })
+const { values } = parseArgs({ options: { 'dsh-root': { type: 'string' }, 'preview-root': { type: 'string' }, 'persistence-only': { type: 'boolean', default: false }, 'source-authoring-only': { type: 'boolean', default: false }, host: { type: 'string', default: '127.0.0.1' }, chinese: { type: 'boolean', default: false }, 'default-id': { type: 'boolean', default: false }, 'ui-install': { type: 'boolean', default: true }, 'native-enable': { type: 'boolean', default: true }, 'refresh-snapshot': { type: 'boolean', default: false } } })
 let chinese = values.chinese
 const zhCopy = { Ready: '就绪', Active: '已激活', 'Plugin ID': '插件 ID', 'Install npm package': '安装 npm 包', Close: '关闭', Continue: '继续', 'Get started': '开始使用', 'Add API Key': '添加 API Key', 'Configure later': '稍后配置', 'Account menu': '账号菜单', Settings: '设置', 'Plugin Hub': '插件市场' }
 const copy = text => chinese ? zhCopy[text] ?? text : text
@@ -97,7 +98,9 @@ try {
     return response
   }, { hostname: '127.0.0.1', port: 0 })
   browser = await chromium.launch({ channel: 'chrome', headless: true })
-  if (values['persistence-only']) {
+  if (values['source-authoring-only']) {
+    await verifySourceAuthoring({ browser,origin,backendUrl:backend.url,target,root,dshRoot,refreshSnapshot:values['refresh-snapshot'] })
+  } else if (values['persistence-only']) {
     await verifyPersistence({ browser, origin, backendUrl: backend.url, target, root, refreshSnapshot: values['refresh-snapshot'] })
   } else {
   const httpPort = await verifyHttpPort(browser, origin, dshRoot)

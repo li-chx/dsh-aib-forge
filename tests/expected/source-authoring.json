@@ -1,0 +1,32 @@
+{
+  "model": "private compatible HTTP fixture",
+  "toolPath": "session/prompt → Agent policy and tools → virtual dsh → Forge",
+  "source": {
+    "language": "TypeScript",
+    "esm": true,
+    "async": true,
+    "files": [
+      "index.ts",
+      "message.ts"
+    ],
+    "privateDependency": "is-odd@3.0.1"
+  },
+  "command": [
+    "source v1: odd",
+    "source v2: odd"
+  ],
+  "sameDocumentAndWorkerDuringUpdates": true,
+  "fileWriteHooks": true,
+  "buildFailurePreservedActiveRevision": true,
+  "prompt": {
+    "sourceBuildCliVisible": true,
+    "reconstructedFromSessionLog": true
+  },
+  "coldRestore": {
+    "forgeOffline": true,
+    "command": true,
+    "sourceFiles": true
+  },
+  "modelToolRemove": true,
+  "removalSurvivesReload": true
+}
