@@ -1,12 +1,12 @@
 # DSH Forge：插件构建与热更新
 
-本文件说明首版的职责、前后端协议、更新流程和验证范围。运行命令及不支持的包类型见 [README](../README.md)。
+本文件说明服务职责、前后端协议、更新流程和验证范围。运行命令及不支持的包类型见 [README](../README.md)。
 
 ## 范围
 
 Forge 是 DSH 专用的插件构建与分发服务。前端发起插件安装、更新和删除，维护已安装状态；后端负责依赖解析、编译及产物保存。DSH 核心及宿主共享模块由前端发布提供，不允许通过 Forge 更新。实现面向电脑 Chrome 中的 Worker Host 插件，以及通过源码构建生成的 JS/TS/TSX Client 插件；通用 npm CLI、云端用户状态和实际 COS 接入不在范围内。
 
-静态前端内嵌构建代际 `dsh-worker-1`。同一代际使用固定编译配置；变更配置时发布新代际并重新构建产物。旧前端不能隐式切换代际。插件源码变更用产物内容哈希区分，不要求每次开发修改都提高 npm 版本。
+静态前端内嵌所选运行时的 `FORGE_GENERATION`；`preview:prepare` 从同一构建生成服务端目标。同一代际使用固定编译配置；变更配置时发布新代际并重新构建产物。旧前端不能隐式切换代际。插件源码变更用产物内容哈希区分，不要求每次开发修改都提高 npm 版本。
 
 ## 分工
 
@@ -16,11 +16,13 @@ Forge 是 DSH 专用的插件构建与分发服务。前端发起插件安装、
 - ArtifactStore：按不可变对象键读写字节；首版实现为本地文件系统，可替换为对象存储适配器。
 - 前端安装器：校验代际、宿主依赖、清单和文件哈希，完整下载后在独占更新流程中写入 VFS、更新插件登记并请求 HMR。
 
+dsh-aiw 页面通过 Worker 本地的 `/__aiw/status` 与 `/__aiw/action` 管理文件、源码项目、历史版本及归档；编译请求再经配置的 HTTP 提供者发送到 Forge `/v1/` 接口。文件和用户状态由浏览器 VFS 及其持久化提供者负责，Forge 的产物存储不承担用户 profile 或会话备份。
+
 边缘部署可复用 Fetch handler 和存储接口，构建执行仍需要支持相应工具链的执行环境；不宣称 Node/pnpm 构建器可以直接运行在任意边缘函数内。
 
 ## 协议 v1
 
-所有 JSON 请求和响应带明确版本或代际。预期错误返回 `{ "error": { "code": "...", "message": "..." } }`，不得根据 message 字符串分派错误。
+构建请求、目标信息及产物清单带明确协议版本和构建代际。预期错误返回 `{ "error": { "code": "...", "message": "..." } }`，不得根据 message 字符串分派错误。
 
 `GET /v1/target` 返回服务端目标 `{ protocol: 1, generation, sharedPackages, hostPackages, clientPackages?, clientModules? }`，其中 hostPackages 是宿主包名到准确版本的库存映射，不表示所有普通依赖都强制共享；必需的 sharedPackages 由所选 DSH 构建导出的 forgeSharedPackages() 生成，覆盖 DSH/Cordis、Client seed 和 Worker 静态替身；可选 clientPackages 是静态网页 seed 提供的 Client 包准确版本，缺省为空。可选 clientModules 是同一前端构建提供的准确模块请求列表，例如 react 与 react/jsx-runtime；包根版本不表示任意子路径都可用。服务端配置决定该映射，不能被请求覆盖。
 
