@@ -1,4 +1,6 @@
 /** Published marketplace acceptance through its real UI, HTTP routes and subprocess install queue. */
+import { openAiw } from './aiw-page.mjs'
+import { verifyAiw } from './verify-aiw.mjs'
 import { verifySourceAuthoring } from './verify-source-authoring.mjs'
 import { resolveDshRoot } from './dsh-path.mjs'
 import { imageTarget } from './image-target.mjs'
@@ -26,9 +28,9 @@ import { parseArgs } from 'node:util'
 import { FileArtifactStore, ForgeCompiler, PnpmPackageResolver, createForgeHandler, loadDshLowerer, startForgeServer } from '../dist/index.js'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
-const { values } = parseArgs({ options: { 'dsh-root': { type: 'string' }, 'preview-root': { type: 'string' }, 'persistence-only': { type: 'boolean', default: false }, 'source-authoring-only': { type: 'boolean', default: false }, 'client-source-only': { type: 'boolean', default: false }, host: { type: 'string', default: '127.0.0.1' }, chinese: { type: 'boolean', default: false }, 'default-id': { type: 'boolean', default: false }, 'ui-install': { type: 'boolean', default: true }, 'native-enable': { type: 'boolean', default: true }, 'refresh-snapshot': { type: 'boolean', default: false } } })
+const { values } = parseArgs({ options: { 'dsh-root': { type: 'string' }, 'preview-root': { type: 'string' }, 'persistence-only': { type: 'boolean', default: false }, 'source-authoring-only': { type: 'boolean', default: false }, 'client-source-only': { type: 'boolean', default: false }, 'aiw-only': { type: 'boolean', default: false }, host: { type: 'string', default: '127.0.0.1' }, chinese: { type: 'boolean', default: false }, 'ui-install': { type: 'boolean', default: true }, 'native-enable': { type: 'boolean', default: true }, 'refresh-snapshot': { type: 'boolean', default: false } } })
 let chinese = values.chinese
-const zhCopy = { Ready: '就绪', Active: '已激活', 'Plugin ID': '插件 ID', 'Install npm package': '安装 npm 包', Close: '关闭', Continue: '继续', 'Get started': '开始使用', 'Add API Key': '添加 API Key', 'Configure later': '稍后配置', 'Account menu': '账号菜单', Settings: '设置', 'Plugin Hub': '插件市场' }
+const zhCopy = { 'Install npm package': '安装 npm 包', 'Account menu': '账号菜单', Settings: '设置', 'Plugin Hub': '插件市场' }
 const copy = text => chinese ? zhCopy[text] ?? text : text
 const dshRoot = resolveDshRoot(values['dsh-root'])
 const { chromium } = await import(pathToFileURL(resolve(dshRoot, 'apps/web/node_modules/playwright/index.mjs')).href)
@@ -98,7 +100,9 @@ try {
     return response
   }, { hostname: '127.0.0.1', port: 0 })
   browser = await chromium.launch({ channel: 'chrome', headless: true })
-  if (values['source-authoring-only']) {
+  if (values['aiw-only']) {
+    await verifyAiw({ browser, origin, backendUrl: backend.url, root, target, refreshSnapshot: values['refresh-snapshot'] })
+  } else if (values['source-authoring-only']) {
     await verifySourceAuthoring({ browser,origin,backendUrl:backend.url,target,root,dshRoot,refreshSnapshot:values['refresh-snapshot'] })
   } else if (values['client-source-only']) {
     await verifySourceAuthoring({ browser,origin,backendUrl:backend.url,target,root,dshRoot,refreshSnapshot:values['refresh-snapshot'],clientSource:true })
@@ -120,19 +124,18 @@ try {
   let workers = 0
   page.on('worker', () => { workers++ })
   await page.goto(`${origin}/preview.html?preview-fixture=none&storage=none&forge=${encodeURIComponent(backend.url)}`)
-  await page.getByRole('button', { name: 'DSH Forge', exact: true }).click()
-  const panel = page.locator('[data-forge-preview]')
-  const status = panel.locator('[role="status"]')
-  await waitStatus(copy('Ready'))
+  const panel = await openAiw(page, { chinese, fresh: true })
   const timeOrigin = await page.evaluate(() => performance.timeOrigin)
-  if (!values['default-id']) await panel.getByLabel(copy('Plugin ID'), { exact: true }).fill('dsh-plugin')
+  await panel.getByLabel(chinese ? 'npm 包' : 'npm package', { exact: true }).fill('dsh-plugin@2.2.1')
   const built = page.waitForResponse(response => response.url() === `${backend.url}/v1/packages/builds` && response.request().method() === 'POST')
   await panel.getByRole('button', { name: copy('Install npm package'), exact: true }).click()
   const buildResponse = await built
   const manifest = await buildResponse.json()
   assert.equal(buildResponse.status(), 200, JSON.stringify(manifest))
-  await page.waitForFunction(() => document.querySelector('[data-forge-preview] fieldset')?.disabled === false)
-  assert((await status.textContent()).startsWith(copy('Active') + '\n'), await status.textContent())
+  await page.waitForFunction(async () => {
+    const value = await (await window.__DSH_TRANSPORT__.fetch('/__forge/installed')).json()
+    return value.plugins.some(plugin => plugin.name === 'dsh-plugin' && plugin.status === 'active')
+  })
   console.log('Hub Host activated')
   await page.locator('style[data-plugin="dsh-plugin"]').first().waitFor({ state: 'attached', timeout: 15000 })
   console.log('Hub Client factory materialized')
@@ -143,13 +146,7 @@ try {
   console.log('Hub installed route ready')
   assert.equal(installedHub.installed['dsh-plugin'], '2.2.1')
   assert(installedHub.loaded.includes('dsh-plugin'), JSON.stringify(installedHub))
-  await panel.getByRole('button', { name: copy('Close'), exact: true }).click()
-  console.log('Forge panel closed')
-  const welcome = page.getByRole('button', { name: copy('Continue'), exact: true })
-  if (await welcome.isVisible()) await welcome.click()
-  const setup = page.getByRole('dialog', { name: copy('Get started'), exact: true })
-  await setup.getByRole('button', { name: copy('Add API Key'), exact: true }).click()
-  await page.getByRole('button', { name: copy('Configure later'), exact: true }).click()
+  console.log('dsh-aiw installed the marketplace package')
   await page.getByRole('button', { name: chinese ? '插件' : 'Plugins', exact: true }).click()
   console.log('Native Plugins page opened before marketplace')
   if (values['native-enable']) {
@@ -357,9 +354,6 @@ try {
     await page.getByText('DSH Plugin Hub', { exact: true }).first().waitFor({ state: 'visible' })
     assert.equal(await page.locator('[data-slot-error]').count(), 0)
     console.log('Marketplace remained available after native Plugins with ' + name)
-  }
-  async function waitStatus(prefix) {
-    await page.waitForFunction(expected => (document.querySelector('[data-forge-preview] [role="status"]')?.textContent ?? '').startsWith(expected), prefix)
   }
   async function waitTask(id) {
     return page.evaluate(async taskId => {

@@ -1,5 +1,6 @@
 /** Model-tool source authoring through a private compatible HTTP provider and the real Agent loop. */
 import assert from 'node:assert/strict'
+import { readyAiw } from './aiw-page.mjs'
 import { once } from 'node:events'
 import { createServer } from 'node:http'
 import { readFile, writeFile } from 'node:fs/promises'
@@ -188,11 +189,11 @@ export async function verifySourceAuthoring({ browser,origin,backendUrl,root,dsh
     const response=await window.__DSH_TRANSPORT__.fetch(path,body===undefined?undefined:{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})
     const value=await response.json();if(!response.ok)throw new Error(JSON.stringify(value));return value
   },{path,body})
+  let firstReady = true
   const ready=async()=>{
-    await page.getByRole('button',{name:'DSH Forge',exact:true}).waitFor()
+    await readyAiw(page, { fresh: firstReady })
+    firstReady = false
     await page.getByRole('button',{name:'Plugins',exact:true}).waitFor()
-    const welcome=page.getByRole('button',{name:'Continue',exact:true});if(await welcome.isVisible())await welcome.click()
-    const setup=page.getByRole('dialog',{name:'Get started',exact:true});if(await setup.isVisible()){await setup.getByRole('button',{name:'Add API Key',exact:true}).click();await page.getByRole('button',{name:'Configure later',exact:true}).click()}
   }
   let session
   let workspaceId

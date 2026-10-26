@@ -1,4 +1,5 @@
 /** Real Chrome, HTTP compiler and Worker lifecycle acceptance without model API credentials. */
+import { openAiw } from './aiw-page.mjs'
 import { resolveDshRoot } from './dsh-path.mjs'
 import { imageTarget } from './image-target.mjs'
 import assert from 'node:assert/strict'
@@ -72,22 +73,21 @@ try {
   let workers = 0
   page.on('worker', () => { workers++ })
   await page.goto(`${origin}/preview.html?preview-fixture=none&storage=none&forge=${encodeURIComponent(backend.url)}`)
-  await page.getByRole('button', { name: 'DSH Forge', exact: true }).click()
-  const panel = page.locator('[data-forge-preview]')
-  const status = panel.locator('[role="status"]')
-  await waitStatus('Ready')
+  await openAiw(page, { fresh: true })
+  let sourceText = `export const name = 'forge-test'; export const inject = ['commands']; export function apply(ctx) { ctx.effect(() => ctx.commands.register({ name: 'forge-test', description: 'Inspect compiled lifecycle', handler: () => ({ kind: 'success', text: 'test v1' }) })); }`
+  let dependencyMap = {}
+  let lastResult
   const timeOrigin = await page.evaluate(() => performance.timeOrigin)
   const session = await rpc('session/create', { request: { cwd: '/dsh/workspace' } })
   const command = () => rpc('commands/execute', { agentId: session.sessionId, line: '/forge-test', submittedAttachments: [] })
 
   await build()
-  assert.match(await status.textContent(), /^Active\n/)
+  assert.equal(lastResult.status, 'active')
   const first = await command()
   assert.equal(first.result.text, 'test v1')
-  const source = panel.getByLabel('TypeScript source', { exact: true })
-  await source.fill((await source.inputValue()).replace('test v1', 'test v2'))
+  sourceText = sourceText.replace('test v1', 'test v2')
   const secondManifest = await build()
-  assert.match(await status.textContent(), /^Active\n/)
+  assert.equal(lastResult.status, 'active')
   logs.push('Installed v2: ' + JSON.stringify(await runtime('/__forge/installed')))
   const second = await command()
   assert.equal(second.result.text, 'test v2')
@@ -102,7 +102,8 @@ try {
   await page.screenshot({ path: resolve(root, '.data/forge-chrome-dark.png') })
   await page.evaluate(wasDark => { document.body.toggleAttribute('data-ds-dark-theme', wasDark) }, dark)
   await build()
-  assert.match(await status.textContent(), /Downloaded files: 0 · Written files: 0/)
+  assert.equal(lastResult.downloadedFiles, 0)
+  assert.equal(lastResult.writtenFiles, 0)
 
   const negative = structuredClone(secondManifest)
   negative.generation = 'different-generation'
@@ -114,7 +115,7 @@ try {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ protocol: 1, generation: target.generation, plugin: {
       id: 'forge-test', name: 'local-forge-test', version: '0.0.1', entry: 'src/index.ts',
-      files: { 'src/index.ts': (await source.inputValue()).replace('test v2', 'test v3') }, dependencies: {}, peerDependencies: {},
+      files: { 'src/index.ts': sourceText.replace('test v2', 'test v3') }, dependencies: {}, peerDependencies: {},
     } }),
   })
   assert.equal(damagedResponse.status, 200)
@@ -125,16 +126,15 @@ try {
 
   let dependencyResult
   if (values.npm) {
-    await panel.getByLabel('Dependencies (JSON)', { exact: true }).fill(JSON.stringify({ 'is-odd': '3.0.1' }))
-    await source.fill(`import isOdd from 'is-odd'\n` + (await source.inputValue()).replace("text: 'test v2'", "text: isOdd(3) ? 'odd' : 'even'"))
+    dependencyMap = { 'is-odd': '3.0.1' }
+    sourceText = `import isOdd from 'is-odd'\n` + sourceText.replace("text: 'test v2'", "text: isOdd(3) ? 'odd' : 'even'")
     const manifest = await build()
     assert(manifest.packages.some(pkg => pkg.name === 'is-odd'))
     const result = await command()
     assert.equal(result.result.text, 'odd')
     dependencyResult = { command: result.result.text, packages: manifest.packages.map(pkg => pkg.name).sort() }
   }
-  await panel.getByRole('button', { name: 'Remove plugin', exact: true }).click()
-  await waitStatus('Removed')
+  assert.equal((await runtime('/__forge/remove', { pluginId: 'forge-test' })).status, 'removed')
   const removed = await command()
   assert.equal(removed, undefined)
   assert.equal((await runtime('/__forge/installed')).plugins.length, 0)
@@ -147,20 +147,18 @@ try {
   else assert.equal(text, await readFile(golden, 'utf8'))
   console.log(JSON.stringify({ ...observed, ...(dependencyResult ? { npm: dependencyResult } : {}) }, null, 2))
 
-  async function waitStatus(prefix) {
-    await page.waitForFunction(expected => {
-      const text = document.querySelector('[data-forge-preview] [role="status"]')?.textContent ?? ''
-      return text.startsWith(expected)
-    }, prefix)
-  }
   async function build() {
-    const response = page.waitForResponse(value => value.url() === `${backend.url}/v1/builds` && value.request().method() === 'POST')
-    await panel.getByRole('button', { name: 'Build and install', exact: true }).click()
-    const result = await response
-    const manifest = await result.json()
-    assert.equal(result.status(), 200, JSON.stringify(manifest))
-    await page.waitForFunction(() => document.querySelector('[data-forge-preview] fieldset')?.disabled === false)
-    assert.match(await status.textContent(), /^Active\n/, await status.textContent())
+    const response = await fetch(`${backend.url}/v1/builds`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ protocol: 1, generation: target.generation, plugin: {
+        id: 'forge-test', name: 'local-forge-test', version: '0.0.1', entry: 'src/index.ts',
+        files: { 'src/index.ts': sourceText }, dependencies: dependencyMap, peerDependencies: {},
+      } }),
+    })
+    const manifest = await response.json()
+    assert.equal(response.status, 200, JSON.stringify(manifest))
+    lastResult = await runtime('/__forge/install', { manifest, baseUrl: backend.url })
+    assert.equal(lastResult.status, 'active', JSON.stringify(lastResult))
     return manifest
   }
   async function rejectedInstall(manifest, code) {

@@ -1,0 +1,54 @@
+{
+  "sidebar": {
+    "label": "dsh-aiw",
+    "belowPlugins": true,
+    "beforeAutomationTasks": true,
+    "noToolbarForgeButton": true
+  },
+  "tabs": [
+    "Plugins",
+    "Files",
+    "Command line",
+    "Backups",
+    "Settings"
+  ],
+  "files": {
+    "create": true,
+    "read": true,
+    "edit": true,
+    "rename": true,
+    "delete": true,
+    "dirtyNavigationProtected": true,
+    "escapeKeepsDraft": true,
+    "explicitDiscard": true
+  },
+  "shell": {
+    "virtualCwdAndRead": true,
+    "nonzeroVisible": true
+  },
+  "projects": {
+    "hostAndClient": true,
+    "retainedClientArtifact": true,
+    "buildAndUpdate": true,
+    "historyAfterArtifactGc": true,
+    "offlineRestore": true,
+    "restoredSource": true,
+    "survivesReload": true
+  },
+  "backup": {
+    "actualDownload": true,
+    "previewDoesNotWrite": true,
+    "importIntoNewDirectory": true,
+    "traversalRejectedWithoutWrites": true,
+    "pluginRoundTripOffline": true,
+    "pluginPreviewDoesNotActivate": true
+  },
+  "responsive": {
+    "width": 390,
+    "horizontalOverflow": false,
+    "singleLineTabs": true,
+    "englishAndChinese": true,
+    "lightAndDark": true
+  },
+  "paidModelCalls": 0
+}

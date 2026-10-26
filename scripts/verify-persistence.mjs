@@ -1,5 +1,6 @@
 /** Real IndexedDB cold starts, durable plugin lifecycle and visible failed writes in Chrome. */
 import assert from 'node:assert/strict'
+import { readyAiw } from './aiw-page.mjs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
@@ -64,25 +65,20 @@ export async function verifyPersistence({ browser, origin, backendUrl, target, r
     await targetPage.locator('[data-worker-storage="saved"]').waitFor()
     return value
   }
-  const ready = async targetPage => {
+  let firstReady = true
+  const ready = async (targetPage, fresh = false) => {
     await targetPage.waitForFunction(() => Boolean(window.__DSH_TRANSPORT__))
-    await targetPage.getByRole('button', { name: 'DSH Forge', exact: true }).waitFor()
+    await readyAiw(targetPage, { fresh: firstReady || fresh })
+    firstReady = false
     await targetPage.getByRole('button', { name: 'Plugins', exact: true }).waitFor()
-    const welcome = targetPage.getByRole('button', { name: 'Continue', exact: true })
-    if (await welcome.isVisible()) await welcome.click()
-    const setup = targetPage.getByRole('dialog', { name: 'Get started', exact: true })
-    if (await setup.isVisible()) {
-      await setup.getByRole('button', { name: 'Add API Key', exact: true }).click()
-      await targetPage.getByRole('button', { name: 'Configure later', exact: true }).click()
-    }
     const layout = await targetPage.evaluate(() => {
       const bar = document.querySelector('[data-worker-storage]')
       const root = document.getElementById('root')
-      const launcher = [...bar.querySelectorAll('button')].find(button => button.textContent === 'DSH Forge')
-      return {display:getComputedStyle(bar).display,position:getComputedStyle(launcher).position,barBottom:bar.getBoundingClientRect().bottom,appTop:root.getBoundingClientRect().top}
+      const save = [...bar.querySelectorAll('button')].find(button => button.textContent === 'Save now')
+      return {display:getComputedStyle(bar).display,position:getComputedStyle(save).position,barBottom:bar.getBoundingClientRect().bottom,appTop:root.getBoundingClientRect().top}
     })
     assert.equal(layout.display, 'flex', 'Persistence toolbar CSS must load with the preview bootstrap')
-    assert.equal(layout.position, 'static', 'Forge launcher belongs in the toolbar rather than overlapping menus')
+    assert.equal(layout.position, 'static', 'Save action belongs in the toolbar rather than overlapping menus')
     assert(layout.appTop >= layout.barBottom, JSON.stringify(layout))
   }
   const install = async (version, targetPage = page) => {
@@ -200,7 +196,7 @@ export async function verifyPersistence({ browser, origin, backendUrl, target, r
     const other = await context.newPage()
     other.setDefaultTimeout(30000)
     await other.goto(url.replace('preview-fixture=none', 'preview-fixture=persistence-source'))
-    await ready(other)
+    await ready(other, true)
     assert.equal((await runtime(other, '/__forge/installed')).plugins.length, 0)
     const isolatedSession = await rpc(other, 'session/create', { request:{cwd:'/dsh/workspace'} })
     await install('1.0.0', other)
