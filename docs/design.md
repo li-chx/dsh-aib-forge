@@ -4,7 +4,7 @@
 
 ## 范围
 
-Forge 是 DSH 专用的插件构建与分发服务。前端发起插件安装、更新和删除，维护已安装状态；后端负责依赖解析、编译及产物保存。DSH 核心及宿主共享模块由前端发布提供，不允许通过 Forge 更新。首版针对电脑 Chrome 中的 Worker Host 插件；TSX Client/UI 插件、通用 npm CLI、云端用户状态和实际 COS 接入不在首版范围。
+Forge 是 DSH 专用的插件构建与分发服务。前端发起插件安装、更新和删除，维护已安装状态；后端负责依赖解析、编译及产物保存。DSH 核心及宿主共享模块由前端发布提供，不允许通过 Forge 更新。实现面向电脑 Chrome 中的 Worker Host 插件，以及通过源码构建生成的 JS/TS/TSX Client 插件；通用 npm CLI、云端用户状态和实际 COS 接入不在范围内。
 
 静态前端内嵌构建代际 `dsh-worker-1`。同一代际使用固定编译配置；变更配置时发布新代际并重新构建产物。旧前端不能隐式切换代际。插件源码变更用产物内容哈希区分，不要求每次开发修改都提高 npm 版本。
 
@@ -22,7 +22,7 @@ Forge 是 DSH 专用的插件构建与分发服务。前端发起插件安装、
 
 所有 JSON 请求和响应带明确版本或代际。预期错误返回 `{ "error": { "code": "...", "message": "..." } }`，不得根据 message 字符串分派错误。
 
-`GET /v1/target` 返回服务端目标 `{ protocol: 1, generation, sharedPackages, hostPackages, clientPackages? }`，其中 hostPackages 是宿主包名到准确版本的库存映射，不表示所有普通依赖都强制共享；必需的 sharedPackages 由所选 DSH 构建导出的 forgeSharedPackages() 生成，覆盖 DSH/Cordis、Client seed 和 Worker 静态替身；可选 clientPackages 是静态网页 seed 提供的 Client 包准确版本，缺省为空。服务端配置决定该映射，不能被请求覆盖。
+`GET /v1/target` 返回服务端目标 `{ protocol: 1, generation, sharedPackages, hostPackages, clientPackages?, clientModules? }`，其中 hostPackages 是宿主包名到准确版本的库存映射，不表示所有普通依赖都强制共享；必需的 sharedPackages 由所选 DSH 构建导出的 forgeSharedPackages() 生成，覆盖 DSH/Cordis、Client seed 和 Worker 静态替身；可选 clientPackages 是静态网页 seed 提供的 Client 包准确版本，缺省为空。可选 clientModules 是同一前端构建提供的准确模块请求列表，例如 react 与 react/jsx-runtime；包根版本不表示任意子路径都可用。服务端配置决定该映射，不能被请求覆盖。
 
 `POST /v1/builds` 接受：
 
@@ -81,7 +81,17 @@ peerDependencies 与 dependencies 分别验证，同名声明必须同时满足�
 
 Worker 兼容 CLI 提供 `dsh plugin --profile <profile> build <directory>`。目录相对于调用方 shell 的 cwd 解析，`forge.json` 明确列出插件身份、入口、文件和依赖。命令从调用方的异步文件系统读取选定源码，不递归搜集工作区；协议和代际取自宿主。所有源码读取完成后，通过已注入的 HTTP 提供者调用同一个 `/v1/builds`，随后复用安装器的校验、文件 hook、HMR 与持久化清单。异步读取期间修改 Forge 地址不会改变已发起命令选定的服务器。
 
-源码校验、下载和编译失败不替换当前插件；激活失败沿既有安装结果报告，不承诺恢复旧实例。更新保持 id 与包名，修改源文件后须再次执行构建，禁用状态保留。该入口编译 Host 源码，不新增 authored Client TSX 打包或通用 Node 执行能力。环境提示词通过既有 system-prompt 记录流程告诉模型命令、持久化确认和可用能力，真实工具调用仍经过 Agent 策略与 Session 日志。
+源码校验、下载和编译失败不替换当前插件；激活失败沿既有安装结果报告，不承诺恢复旧实例。更新保持 id 与包名，修改源文件后须再次执行构建，禁用状态保留。该入口可同时编译 Host 源码和显式声明的 Client 程序，不提供通用 Node 执行能力。环境提示词通过既有 system-prompt 记录流程告诉模型命令、持久化确认和可用能力，真实工具调用仍经过 Agent 策略与 Session 日志。
+
+### Client 源码程序
+
+源码请求可加入 `client: { entry, files?, inject?, dependencies?, peerDependencies? }`。根 files 显式提交全部源码；client.entry 必须是其中的 JS/TS/JSX/TSX 文件。client.files 默认为仅含 Client 入口的列表，表示完全不属于 Host 程序的文件；列表必须含 Client 入口，不得含 Host 入口，并须是根 files 的子集。其他文件继续逐文件转换为 Host 模块，因此 Host 的计算 require/import 不会因为 Client 也引用某个 helper 就丢失文件。共享 helper 不放入 client.files，浏览器打包器按 Client 导入再次编译它。
+
+Client 源码使用普通 Cordis 插件导出，Forge 通过 esbuild 浏览器配置生成一个 lazy factory，保存为保留路径 forge-client.js，并生成 dsh.client 与 ./client 导出。原有 Client 图、槽位、HMR 和产物持久化负责后续加载。client.inject 是实际挂载的 Client 包依赖边，不是 slots 等 service 名；仅出现在 Host target 库存不能证明该包有运行中的 Client 半。必须验证 Client 挂载和页面行为，不能从 Host 构建或激活成功推断 UI 已生效。
+
+client.dependencies 中的私有浏览器依赖只打包进 Client 产物，不授予 Host 私有映射；client.peerDependencies 不自动安装。Client 导入可使用两组声明及根声明，同名跨面声明在本代际必须使用相同范围字符串。每个私有依赖自己的引用也按其 manifest 检查，并验证供应版本和安装脚本策略。准确 clientModules 请求复用页面 seed；带 inject 的 Client 图包可通过包名或 /client 请求，其他 DSH/Cordis 请求不允许打包副本。浏览器解析使用 browser 条件，不提供原生 Node 模块，也不提供私有 Client 包的动态运行时解析器。
+
+该入口不接受自带根 package.json、自定义显示资源导出、CSS 或非 JSON 资源 import、代码拆分或顶层 await。样式可由 JavaScript 的生命周期 effect 或 React 样式元素管理。输入和产物受资源总量限制，构建不执行插件代码，也不做 TypeScript 类型检查。完整 forge.json 示例见 [Client sources](../README.md#client-sources)。
 
 ## 已发布 npm 插件
 

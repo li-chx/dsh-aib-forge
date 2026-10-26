@@ -41,3 +41,9 @@ test('incomplete migration artifacts fail target derivation before preview repla
   assert.throws(() => imageTarget({ files: {} }, 'dsh-worker-rc2-1', policy), /No base-image/)
   assert.throws(() => imageTarget({ files: { ...packed.files, 'config/vfs-manifest.json': bytes({}) } }, 'dsh-worker-rc2-1', policy), /Client package roster/)
 })
+
+test('preview target carries exact page module specifiers without inferring package subpaths', () => {
+  const target = imageTarget({ ...packed, clientModules: ['react', 'react/jsx-runtime'] }, 'dsh-worker-rc2-8', policy)
+  assert.deepEqual(target.clientModules, ['react', 'react/jsx-runtime'])
+  assert.equal(target.clientModules.includes('react/server'), false)
+})

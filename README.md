@@ -43,7 +43,7 @@ The default listener is `http://127.0.0.1:36936`, with objects under `.data/arti
 
 `--registry` selects the npm registry, `--pnpm` its executable, `--install-timeout-ms` its deadline, `--max-request-bytes` the source upload bound, and `--max-builds` the concurrent build bound. Builds create fresh temporary workspaces and remove them on success or failure. Package installation scripts are disabled. Forge's own esbuild installation is approved in `pnpm-workspace.yaml`; that does not approve plugin installation scripts.
 
-## Model-authored Host sources
+## Model-authored sources
 
 Inside the configured DSH Worker shell, a model can write a source directory and invoke:
 
@@ -51,9 +51,41 @@ Inside the configured DSH Worker shell, a model can write a source directory and
 dsh plugin --profile web build ./greeting-source
 ```
 
-The directory's `forge.json` supplies `id`, `name`, `version`, `entry` and an explicit `files` array, plus optional dependency and peer declarations. The Worker reads these files from its VFS and posts their contents to the existing `/v1/builds` endpoint; generation and protocol come from the running host. Filesystem reads and HTTP requests use the invocation's filesystem and configured HTTP provider. Forge returns the same immutable manifest as the page editor, and the Worker applies it through the same installer, HMR and durable catalog. Source text stays in the workspace; generated artifacts stay under the profile's Forge directory. Updating source requires another build command. No npm publication or local Node compiler is required, and authored Client TSX bundles remain outside this source workflow.
+The directory's `forge.json` supplies `id`, `name`, `version`, `entry` and an explicit `files` array, plus optional dependency and peer declarations. The Worker reads these files from its VFS and posts their contents to the existing `/v1/builds` endpoint; generation and protocol come from the running host. Filesystem reads and HTTP requests use the invocation's filesystem and configured HTTP provider. Forge returns the same immutable manifest as the page editor, and the Worker applies it through the same installer, HMR and durable catalog. Source text stays in the workspace; generated artifacts stay under the profile's Forge directory. Updating source requires another build command. No npm publication or local Node compiler is required. An optional `client` declaration builds a browser entry alongside the Host entry.
 
 The command is part of the Worker compatibility CLI. Existing npm `add`, `update` and `remove` operations retain their behavior. Build or download failure preserves the installed plugin; activation failure reports failure without promising to recover the previous instance. An installed disabled plugin remains disabled. After verifying the result, use the page's explicit save action to drain Session buffers and commit browser storage.
+
+### Client sources
+
+A local source package can add an optional Client program to `forge.json`:
+
+```json
+{
+  "id": "local-counter",
+  "name": "local-counter",
+  "version": "1.0.0",
+  "entry": "index.ts",
+  "files": ["index.ts", "client.tsx", "shared.ts"],
+  "dependencies": {},
+  "peerDependencies": {},
+  "client": {
+    "entry": "client.tsx",
+    "files": ["client.tsx"],
+    "inject": ["@deepseek-ai/dsh-client-ui-conversation"],
+    "peerDependencies": { "react": "^18.3.1" }
+  }
+}
+```
+
+The root `files` list contains every submitted source. `client.entry` names a submitted JS, TS, JSX or TSX module. `client.files` declares files exclusively used by the Client and defaults to `[client.entry]`; it must include that entry, exclude the Host entry and be a subset of the root list. Every other submitted runtime file remains independently compiled for the Host, including helpers loaded through computed `require`/`import`. A shared helper therefore belongs in root `files` but outside `client.files`; the browser bundler also compiles it when the Client imports it. This explicit selection does not infer that a helper belongs only to the Client from static imports.
+
+Client sources export an ordinary Cordis plugin, such as named `inject` and `apply`; they do not write `window.__ModuleLoader__` wrappers. Forge bundles the browser program into reserved `forge-client.js` and generates the supported `dsh.client` and `./client` metadata. The existing Client module graph loads and hot-replaces that artifact. Root `package.json`, arbitrary exports, custom display-resource declarations, CSS imports, non-JSON asset imports, code splitting and top-level await are unsupported. Styles can be lifecycle-owned JavaScript or React-rendered styles. Source files and the generated Client artifact use the existing VFS persistence and file hooks.
+
+`client.inject` names package edges in the live Client graph, for example the conversation package that owns a slot; it does not name Cordis services such as `slots`. Injected packages must be present in the fixed target and actually mounted with a Client declaration. Target inventory membership alone cannot establish a live Client entry. A successful Host activation does not establish that the Client mounted or rendered; inspect the live slot and exercise the requested UI.
+
+Optional `client.dependencies` and `client.peerDependencies` authorize browser imports in addition to the root declarations. Client-only ordinary dependencies are installed without scripts and bundled privately; they never add Worker Host package mappings. Root dependencies and peers keep their Host behavior. A name repeated between root and Client declarations must use the same range string; conflicting declarations fail before installation. Peers are not automatically installed. Each private dependency's own imports are checked against its manifest, including its shared peers and installed versions; dependency installation scripts remain unsupported.
+
+The target's optional `clientModules` lists exact module-table requests, while `clientPackages` records their package-root versions. The preview generator obtains the request list from the same DSH build as the page. Browser imports reuse only exact supplied requests, including declared subpaths such as `react/jsx-runtime`; a package-root version does not authorize arbitrary subpaths. React, Cordis and DSH modules are never privately duplicated. An injected graph package may be imported by its package name or `/client` face when declared as a dependency or peer. Other core Client requests fail explicitly. Browser dependencies are resolved with browser conditions, and native Node modules are unavailable. Dynamic requests have only the already bundled code and registered page modules available; this build does not provide a separate runtime resolver for private Client packages.
 
 ## Optional host patch admission
 
@@ -76,7 +108,7 @@ Peer requirements are validated separately from dependencies. A target peer must
 
 Prebuilt Client bundles keep their existing page module-table lookup. Host package dependency maps do not provide private Client externals. Client seed versions remain fixed; `dsh.client.external` declarations remain unsupported. A successful private Host dependency build does not establish that an equivalent page dependency is available.
 
-This generation supports independent Host modules, relative and package subpath requests, computed loaders and package-local module cycles through the Worker cache. Package roots and preserved export trees use the Worker’s fixed active condition set (`browser`, `require`, `import`, `default`) in declaration order, rather than separate Node import/require faces. Dependency package cycles remain rejected because package identities include child identities. Installation scripts, native addon files, unsupported source syntax and unsupported package entry layouts remain explicit limits. Type/JSX stripping does not create a new Client bundling pipeline. Unknown or unavailable system modules and undeclared requests fail when resolved or called at runtime; successful compilation is not proof of activation. A failed build may leave immutable objects already produced for dependencies; no manifest is returned to activate them.
+This generation supports independent Host modules, relative and package subpath requests, computed loaders and package-local module cycles through the Worker cache. Package roots and preserved export trees use the Worker’s fixed active condition set (`browser`, `require`, `import`, `default`) in declaration order, rather than separate Node import/require faces. Dependency package cycles remain rejected because package identities include child identities. Installation scripts, native addon files, unsupported source syntax and unsupported package entry layouts remain explicit limits. Published Host compilation and source builds without a `client` declaration do not create browser bundles. Unknown or unavailable system modules and undeclared requests fail when resolved or called at runtime; successful compilation is not proof of activation. A failed build may leave immutable objects already produced for dependencies; no manifest is returned to activate them.
 
 Every collected runtime file must be transformable, including published CLI scripts, examples and files not loaded during activation. The synchronous Worker module wrapper does not support top-level await. In the real `@xmanrui/dsh-im@5.6.0` build, alias-based requests pass compilation, but the published `bin/dsh-im.mjs` fails with `LOWERING_FAILED` because it contains top-level await. Forge does not replace that file with a successful stub or claim that the plugin can run.
 
@@ -132,11 +164,14 @@ pnpm test:browser --dsh-root /absolute/path/to/deepseek-harness --npm
 pnpm test:plugin-hub --dsh-root /absolute/path/to/deepseek-harness
 pnpm test:plugin-hub --dsh-root /absolute/path/to/deepseek-harness --preview-root .data/preview --persistence-only
 pnpm test:plugin-hub --dsh-root /absolute/path/to/deepseek-harness --preview-root .data/preview --source-authoring-only
+pnpm test:plugin-hub --dsh-root /absolute/path/to/deepseek-harness --preview-root .data/preview --client-source-only
 ```
 
 `test:browser` uses installed Google Chrome and the selected DSH checkout’s Playwright dependency. It starts temporary HTTP services, verifies v1/v2 commands, no-op file counts, deletion, separate npm dependencies and preflight rejection in the same Worker, then compares `tests/expected/browser-lifecycle.json`. Test artifacts and screenshots remain under ignored `.data/`.
 
 `test:plugin-hub --source-authoring-only` uses a private compatible model HTTP fixture through the real `session/prompt` Agent and tool pipeline. The fixture emits `write`, `bash` and `read` calls to build and update a multi-file TypeScript plugin with a private npm dependency, retains the active revision after a compiler failure, restores both code and source with Forge offline, and removes the plugin through a model tool call. It exports the Session log and checks that tool calls/results and the actual model-visible source-authoring guidance can be reconstructed. It never calls a paid model or changes the preview's default API credentials. Its owner-local snapshot is `tests/expected/source-authoring.json`.
+
+`test:plugin-hub --client-source-only` adds an authored TSX component to the same real Agent workflow. It verifies `/test` increments an on-page counter over SSE, v1-to-v2 replacement preserves the Host value in the same page and Worker, a Client compile error keeps the active UI, and saved source, UI and count recover with Forge offline. Uninstall removes the component, style and Host route. The lane checks a 390-pixel viewport and records `tests/expected/client-source-authoring.json`; screenshots under `.data/forge-client-source-*` show the running component.
 
 `test:plugin-hub --persistence-only` runs a separate Chrome cold-start lane with a private IndexedDB context. It holds the storage UI module request while the built shell starts, verifies that shell boot remains pending without a missing-loader error, and then releases the request to complete startup. It installs a published fixture, edits its configuration and workspace, names a session, waits for committed storage, and reloads with Forge requests blocked. Later reloads check disabled selection, updated artifacts and uninstall. A second source overlay verifies independent storage, competing tabs verify revision rejection, and an aborted transaction verifies visible failed saving. Corrupting this temporary namespace must prevent boot without replacing the stored bytes. Its owner-local snapshot is `tests/expected/persistence.json`; `.data/forge-storage-*.png` captures the actual saved, conflict, failed and mobile toolbar states. This lane starts fresh Workers; the existing hot-update lane explicitly uses `storage=none` and retains its one-Worker requirement.
 

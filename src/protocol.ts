@@ -18,12 +18,19 @@ export const buildRequestSchema = z.object({
     dependencies: z.record(packageName, z.string()),
     peerDependencies: z.record(packageName, z.string()),
     peerDependenciesMeta: z.record(packageName, z.object({ optional: z.boolean().optional() }).strict()).optional(),
+    client: z.object({
+      entry: relativePath,
+      inject: z.array(packageName).default([]).refine(names => new Set(names).size === names.length, 'Duplicate Client injection'),
+      files: z.array(relativePath).min(1).refine(paths => new Set(paths).size === paths.length, 'Duplicate Client source').optional(),
+      dependencies: z.record(packageName, z.string()).optional(),
+      peerDependencies: z.record(packageName, z.string()).optional(),
+    }).strict().optional(),
   }).strict(),
 }).strict()
 /** Validated plugin build request. */
 export type BuildRequest = z.infer<typeof buildRequestSchema>
 /** A fixed runtime and compiler generation configured by the operator. */
-export interface BuildTarget { protocol: 1; generation: string; sharedPackages: string[]; hostPackages: Record<string, string>; clientPackages?: Record<string, string> }
+export interface BuildTarget { protocol: 1; generation: string; sharedPackages: string[]; hostPackages: Record<string, string>; clientPackages?: Record<string, string>; clientModules?: string[] }
 /** One immutable artifact, addressed by its bytes. */
 export interface ArtifactFile { path: string; sha256: string; size: number; objectKey: string }
 /** One package instance and its exact runtime dependency mapping. */

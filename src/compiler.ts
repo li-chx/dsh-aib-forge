@@ -12,6 +12,7 @@ import type { ArtifactStore } from './store.js'
 import { sha256 } from './store.js'
 import type { PackageResolver, ResolvedPackage } from './resolver.js'
 import { validateDependencies } from './resolver.js'
+import { compileSourceClient, sourceClientDeclarations, sourceClientFiles, SOURCE_CLIENT_FILE, type SourceClientResult } from './source-client.js'
 
 /** The actual image transformer, injected to keep the executor independently testable. */
 export type ModuleLowerer = (options: { filename: string; source: string }) => { code: string; moduleRequests: readonly string[]; metaResolveRequests: readonly string[] }
@@ -43,6 +44,14 @@ export function validateTarget(target: BuildTarget): void {
     for (const [name, version] of Object.entries(packages)) if (!barePackage.test(name) || !semver.valid(version)) throw new Error(`Invalid ${face} package ${name}@${version}`)
   }
   for (const name of [...Object.keys(target.clientPackages ?? {}), ...Object.keys(target.hostPackages).filter(isCore)]) if (!target.sharedPackages.includes(name)) throw new Error(`Shared package policy omits ${name}`)
+  if (target.clientModules !== undefined) {
+    if (!Array.isArray(target.clientModules) || new Set(target.clientModules).size !== target.clientModules.length) throw new Error('Invalid configured exact Client module inventory')
+    for (const specifier of target.clientModules) {
+      if (typeof specifier !== 'string' || !/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*(?:\/[a-zA-Z0-9_@.+-]+)*$/.test(specifier) || specifier.split('/').some(part => part === '.' || part === '..')) throw new Error('Invalid configured exact Client module inventory')
+      const name = specifier.split('/').slice(0, specifier.startsWith('@') ? 2 : 1).join('/')
+      if (target.clientPackages?.[name] === undefined) throw new Error(`Client module ${specifier} has no package version in the target`)
+    }
+  }
 }
 function permitsHostPatchUpgrade(name: string, range: string, host: string, allowed: ReadonlySet<string>): boolean {
   if (!allowed.has(name) || !/^\d+\.\d+\.\d+(?:\+[0-9A-Za-z.-]+)?$/.test(range)) return false
@@ -92,13 +101,26 @@ export class ForgeCompiler implements BuildExecutor {
       if (!/\.(?:[cm]?[jt]sx?|json)$/.test(file) || file.split('/').includes('node_modules') || file === 'package.json') throw new ForgeError('SOURCE_FILE_UNSUPPORTED', `Unsupported source file ${file}; provide JS, TS or JSON source files outside node_modules`)
     }
     validateDependencies(plugin.dependencies); validateDependencies(plugin.peerDependencies)
+    if (plugin.client !== undefined) { sourceClientFiles(plugin); sourceClientDeclarations(plugin) }
     const install: Record<string, string> = {}
-    for (const [name, range] of Object.entries(plugin.dependencies)) if (!runtimeDependency(name, range, target, this.allowHostPatchUpgrade)) install[name] = range
+    for (const [name, range] of Object.entries(plugin.dependencies)) {
+      if (!runtimeDependency(name, range, target, this.allowHostPatchUpgrade)) install[name] = range
+    }
+    for (const [name, range] of Object.entries(plugin.client?.dependencies ?? {})) {
+      if (target.clientPackages?.[name] !== undefined) {
+        if (!semver.satisfies(target.clientPackages[name]!, range, { includePrerelease: true })) throw new ForgeError('CLIENT_VERSION_MISMATCH', `${name} requires ${range}; the frontend Client provides ${target.clientPackages[name]}`)
+      } else if (!plugin.client?.inject.includes(name)) {
+        if (isCore(name) || target.sharedPackages.includes(name)) throw new ForgeError('CLIENT_IMPORT_UNSUPPORTED', `${name} is not provided by the shared Client module table or client.inject`)
+        install[name] = range
+      }
+    }
     const directory = await mkdtemp(join(this.options.temporaryRoot ?? tmpdir(), 'dsh-forge-'))
     try {
       for (const [file, contents] of Object.entries(plugin.files)) { const path = join(directory, file); await mkdir(dirname(path), { recursive: true }); await writeFile(path, contents) }
       await resolver.prepare(directory, install)
-      return await this.compile(directory, { directory, entry: join(directory, plugin.entry), name: plugin.name, version: plugin.version, dependencies: plugin.dependencies, peerDependencies: plugin.peerDependencies, outputEntry: plugin.entry, modules: Object.fromEntries(Object.entries(plugin.files).filter(([path]) => !path.endsWith('.json')).map(([path, value]) => [path, new TextEncoder().encode(value)])), assets: Object.fromEntries(Object.entries(plugin.files).filter(([path]) => path.endsWith('.json')).map(([path, value]) => [path, new TextEncoder().encode(value)])), ...(plugin.peerDependenciesMeta === undefined ? {} : { peerDependenciesMeta: plugin.peerDependenciesMeta }) }, plugin.id)
+      const client = plugin.client === undefined ? undefined : await compileSourceClient(directory, plugin, target)
+      const files = client?.hostFiles ?? plugin.files
+      return await this.compile(directory, { directory, entry: join(directory, plugin.entry), name: plugin.name, version: plugin.version, dependencies: plugin.dependencies, peerDependencies: plugin.peerDependencies, outputEntry: plugin.entry, modules: Object.fromEntries(Object.entries(files).filter(([path]) => !path.endsWith('.json')).map(([path, value]) => [path, new TextEncoder().encode(value)])), assets: { ...Object.fromEntries(Object.entries(files).filter(([path]) => path.endsWith('.json')).map(([path, value]) => [path, new TextEncoder().encode(value)])), ...client === undefined ? {} : { [SOURCE_CLIENT_FILE]: client.asset } }, ...client === undefined ? {} : { metadata: client.metadata }, ...(plugin.peerDependenciesMeta === undefined ? {} : { peerDependenciesMeta: plugin.peerDependenciesMeta }) }, plugin.id, client)
     } finally { await rm(directory, { recursive: true, force: true }) }
   }
   /** Resolve and compile a published registry package without executing its install scripts. */
@@ -123,13 +145,13 @@ export class ForgeCompiler implements BuildExecutor {
       return await this.compile(directory, plugin, request.pluginId)
     } finally { await rm(directory, { recursive: true, force: true }) }
   }
-  private async compile(directory: string, plugin: ResolvedPackage, pluginId: string): Promise<BuildManifest> {
+  private async compile(directory: string, plugin: ResolvedPackage, pluginId: string, sourceClient?: SourceClientResult): Promise<BuildManifest> {
     const { target, resolver, store, lowerModule } = this.options
       const packages = new Map<string, PackageArtifact>()
       const completed = new Map<string, PackageArtifact>()
       const active = new Set<string>()
-      const hostPackages: Record<string, string> = {}
-      const clientPackages: Record<string, string> = {}
+      const hostPackages: Record<string, string> = { ...sourceClient?.hostPackages }
+      const clientPackages: Record<string, string> = { ...sourceClient?.clientPackages }
       const compilePackage = async (pkg: ResolvedPackage, inheritedPrivate: ReadonlySet<string> = new Set()): Promise<PackageArtifact> => {
         validateDependencies(pkg.dependencies); validateDependencies(pkg.peerDependencies)
         // A target peer cannot silently bind the image when its consumer supplies a private instance.

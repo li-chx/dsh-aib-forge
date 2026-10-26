@@ -10,7 +10,7 @@ const pluginId = 'source-authoring'
 const packageName = 'local-source-authoring'
 const directory = '/dsh/workspace/source-authoring'
 const buildCommand = `dsh plugin --profile web build ${directory}`
-const helper = version => `export async function message(value: string): Promise<string> { return Promise.resolve('source ${version}: ' + value) }\n`
+const helper = version => `export const revision = '${version}'\nexport async function message(value: string): Promise<string> { return Promise.resolve('source ${version}: ' + value) }\n`
 const entry = `import isOdd from 'is-odd'\nimport { message } from './message.ts'\nexport const name = '${packageName}'\nexport const inject = ['commands']\nexport function apply(ctx: any) {\n  ctx.effect(() => ctx.commands.register({ name: 'source-proof', description: 'Inspect a compiled source plugin', handler: async () => ({ kind: 'success', text: await message(isOdd(3) ? 'odd' : 'even') }) }))\n}\n`
 const manifest = version => ({ id:pluginId,name:packageName,version,entry:'index.ts',files:['index.ts','message.ts'],dependencies:{'is-odd':'3.0.1'} })
 const write = (path, content) => ({ name:'write',args:{file_path:`${directory}/${path}`,content} })
@@ -25,7 +25,97 @@ const plans = {
   remove:[bash(`dsh plugin --profile web remove ${packageName}`)],
 }
 
-async function startModel(origin) {
+const counterHost = `
+  const fs = require('node:fs');
+  const countFile = '/dsh/workspace/source-counter.txt';
+  let count = fs.existsSync(countFile) ? Number(fs.readFileSync(countFile, 'utf8')) : 0;
+  const readers = new Set<() => void>();
+  const closers = new Set<() => void>();
+  ctx.effect(() => () => { for (const close of [...closers]) close(); });
+  ctx.connection.fetch.register({ path: '/api/source-authoring.counter', methods: ['GET'], requestBody: 'buffered', fetch: async (request: Request) => {
+    if (new URL(request.url).searchParams.has('inspect')) return Response.json({ count, readers: readers.size });
+    let release = (_close = true) => {};
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        let active = true;
+        const emit = () => controller.enqueue(new TextEncoder().encode('data: ' + JSON.stringify({ count }) + '\\n\\n'));
+        const stop = () => release();
+        release = (close = true) => {
+          if (!active) return;
+          active = false;
+          readers.delete(emit); closers.delete(stop);
+          request.signal.removeEventListener('abort', stop);
+          if (close) controller.close();
+        };
+        readers.add(emit); closers.add(stop);
+        request.signal.addEventListener('abort', stop, { once: true });
+        if (request.signal.aborted) stop(); else emit();
+      },
+      cancel() { release(false); },
+    });
+    return new Response(stream, { headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-store' } });
+  } });
+  ctx.effect(() => ctx.commands.register({ name: 'test', description: 'Increment the on-page counter', handler: () => {
+    count += 1; fs.writeFileSync(countFile, String(count));
+    for (const emit of readers) emit();
+    return { kind: 'success', text: 'counter = ' + count };
+  } }));
+`
+const counterEntry = entry.replace("['commands']", "['commands', 'connection']").replace('export function apply(ctx: any) {\n', 'export function apply(ctx: any) {\n' + counterHost)
+const clientEntry = `import { useEffect, useState } from 'react'
+import { revision } from './message.ts'
+export const name = '${packageName}-client'
+export const inject = ['slots', 'locale']
+export function apply(ctx: any) {
+  ctx.effect(() => ctx.locale.register('sourceAuthoringCounter', {
+    en: { counter: 'Counter {version}: {count}', unavailable: 'Counter unavailable' },
+    zh: { counter: '计数器 {version}：{count}', unavailable: '无法读取计数器' },
+  }))
+  function Counter({ t }: { t: (key: string, values?: Record<string, string | number>) => string }) {
+    const [count, setCount] = useState<number | undefined>()
+    const [failed, setFailed] = useState(false)
+    useEffect(() => {
+      const lifetime = new AbortController()
+      async function follow() {
+        const response = await fetch('/api/source-authoring.counter', { signal: lifetime.signal })
+        if (!response.ok || !response.body) throw new Error('Counter request failed')
+        const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
+        let pending = ''
+        try {
+          while (true) {
+            const part = await reader.read()
+            if (part.done) throw new Error('Counter stream ended')
+            pending += part.value
+            let newline
+            while ((newline = pending.indexOf('\\n')) >= 0) {
+              const line = pending.slice(0, newline)
+              pending = pending.slice(newline + 1)
+              if (!line.startsWith('data:')) continue
+              const value = JSON.parse(line.slice(5))
+              if (!Number.isSafeInteger(value.count) || value.count < 0) throw new Error('Invalid counter value')
+              if (!lifetime.signal.aborted) setCount(value.count)
+            }
+          }
+        } finally { try { await reader.cancel() } finally { reader.releaseLock() } }
+      }
+      void follow().catch(() => { if (!lifetime.signal.aborted) setFailed(true) })
+      return () => lifetime.abort()
+    }, [])
+    return <><style data-source-counter-style>{'[data-source-counter] { display:inline-flex; align-items:center; max-width:100%; flex-wrap:wrap; font:inherit; color:inherit; }'}</style><output role="status" data-source-counter={revision}>{failed ? t('unavailable') : t('counter', { version: revision, count: count ?? '…' })}</output></>
+  }
+  ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({ name: 'conversation.composer.dock', id: 'source-authoring-counter', locale: 'sourceAuthoringCounter', order: 5 }, Counter))
+}
+`
+const clientManifest = version => ({ ...manifest(version), files: ['index.ts', 'message.ts', 'client.tsx'], client: { entry: 'client.tsx', inject: ['@deepseek-ai/dsh-client-ui-conversation', '@deepseek-ai/dsh-client-locale'] }, peerDependencies: { react: '18.3.1' } })
+const clientPlans = { ...plans,
+  install: [write('forge.json', JSON.stringify(clientManifest('1.0.0'))), write('index.ts', counterEntry), write('message.ts', helper('v1')), write('client.tsx', clientEntry), bash(buildCommand)],
+  update: [read('forge.json'), read('message.ts'), write('forge.json', JSON.stringify(clientManifest('1.0.1'))), write('message.ts', helper('v2')), bash(buildCommand)],
+  retained: [...plans.retained, read('client.tsx')],
+  clientbroken: [read('client.tsx'), write('client.tsx', 'export function apply() { return <broken\n'), bash(buildCommand)],
+  clientrepair: [read('client.tsx'), write('client.tsx', clientEntry)],
+}
+
+async function startModel(origin, plans) {
   const captured = []
   const failures = []
   const completed = new Map()
@@ -76,9 +166,10 @@ async function startModel(origin) {
   }
 }
 
-/** Run model-authored TS, private npm dependencies and cold restoration without a paid model call. */
-export async function verifySourceAuthoring({ browser,origin,backendUrl,root,dshRoot,refreshSnapshot }) {
-  const model=await startModel(origin)
+/** Run real Agent source tools, optional TSX UI replacement and cold restoration without a paid model call. */
+export async function verifySourceAuthoring({ browser,origin,backendUrl,root,dshRoot,refreshSnapshot,clientSource = false }) {
+  const scenarioPlans = clientSource ? clientPlans : plans
+  const model=await startModel(origin, scenarioPlans)
   const context=await browser.newContext({locale:'en-US',viewport:{width:1280,height:900}})
   const page=await context.newPage();page.setDefaultTimeout(45000)
   const logs=[];page.on('console',message=>{if(message.type()==='error')logs.push(message.text())});page.on('pageerror',error=>logs.push(error.message))
@@ -104,7 +195,28 @@ export async function verifySourceAuthoring({ browser,origin,backendUrl,root,dsh
     const setup=page.getByRole('dialog',{name:'Get started',exact:true});if(await setup.isVisible()){await setup.getByRole('button',{name:'Add API Key',exact:true}).click();await page.getByRole('button',{name:'Configure later',exact:true}).click()}
   }
   let session
+  let workspaceId
   const command=line=>rpc('commands/execute',{agentId:session.sessionId,line,submittedAttachments:[]})
+  const counter = page.locator('[data-source-counter]')
+  const sheet = page.locator('style[data-source-counter-style]')
+  const counterState = () => page.evaluate(async () => {
+    const response = await fetch('/api/source-authoring.counter?inspect=1',{signal:AbortSignal.timeout(5000)})
+    return {status:response.status,body:response.ok?await response.json():undefined}
+  })
+  const selectSession = async () => {
+    const title=page.getByText('Source authoring acceptance', {exact:true}).first()
+    if(!await title.isVisible()) await page.locator(`[data-row-key="workspace:${workspaceId}"]`).click()
+    await title.click()
+  }
+  const expectCounter = async (version,count) => {
+    await counter.waitFor({state:'visible'})
+    await page.waitForFunction(({version,count}) => {
+      const nodes = [...document.querySelectorAll('[data-source-counter]')]
+      return nodes.length===1 && nodes[0].dataset.sourceCounter===version && nodes[0].textContent===`Counter ${version}: ${count}`
+    }, {version,count})
+    assert.equal(await sheet.count(),1)
+    assert.deepEqual(await counterState(),{status:200,body:{count,readers:1}})
+  }
   const exportLog=async()=>{
     const bytes=await page.evaluate(async id=>{
       const response=await window.__DSH_TRANSPORT__.fetch(`/api/session.export?sessionId=${encodeURIComponent(id)}`)
@@ -116,6 +228,7 @@ export async function verifySourceAuthoring({ browser,origin,backendUrl,root,dsh
   }
   const runPhase=async phase=>{
     let timer
+    const expectedFailure = phase==='broken'||phase==='clientbroken'
     const completed=model.expect(phase)
     void completed.catch(()=>{})
     const deadline=new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error(`Model/tool phase ${phase} exceeded 180 seconds`)),180000)})
@@ -128,15 +241,15 @@ export async function verifySourceAuthoring({ browser,origin,backendUrl,root,dsh
       },session.sessionId)
       const events=await exportLog()
       const calls=events.filter(event=>event.type==='tool/call'&&event.data.callId.startsWith(`source-${phase}-`))
-      assert.deepEqual(calls.map(event=>event.data.name),plans[phase].map(call=>call.name))
+      assert.deepEqual(calls.map(event=>event.data.name),scenarioPlans[phase].map(call=>call.name))
       const results=events.filter(event=>event.type==='tool/result'&&event.data.message.toolCallId.startsWith(`source-${phase}-`))
-      assert.equal(results.length,plans[phase].length)
-      for(const [index,result] of results.entries()) if(phase!=='broken'||index!==plans[phase].length-1) assert.equal(result.data.message.isError??false,false,JSON.stringify(result.data))
+      assert.equal(results.length,scenarioPlans[phase].length)
+      for(const [index,result] of results.entries()) if(!expectedFailure||index!==scenarioPlans[phase].length-1) assert.equal(result.data.message.isError??false,false,JSON.stringify(result.data))
       const request=model.captured.findLast(value=>value.phase===phase)
-      assert.equal(request.results.length,plans[phase].length)
-      for(const [index,call] of plans[phase].entries()) if(call.name==='bash') {
+      assert.equal(request.results.length,scenarioPlans[phase].length)
+      for(const [index,call] of scenarioPlans[phase].entries()) if(call.name==='bash') {
         const output=request.results[index].text
-        if(phase==='broken') assert.match(output,/\[exit code: [1-9]\d*\]/)
+        if(expectedFailure) assert.match(output,/\[exit code: [1-9]\d*\]/)
         else {assert.doesNotMatch(output,/\[exit code: [1-9]\d*\]/);assert(output.includes(`${phase==='remove'?'Removed':'Installed'} ${packageName}`),output)}
       }
       console.log(`Real Agent tools completed source phase ${phase}: ${calls.map(event=>event.data.name).join(', ')}`)
@@ -151,7 +264,8 @@ export async function verifySourceAuthoring({ browser,origin,backendUrl,root,dsh
     assert.equal(await hostWorker.evaluate(()=>self.name),'dsh-host')
     await rpc('credentials/set',{ref:'FORGE_SOURCE_FIXTURE_KEY',value:'fixture-only-not-a-real-key'})
     await rpc('settings/update',{ns:'llm-deepseek',patch:{baseURL:`${model.url}/v1`,apiKeyEnv:'FORGE_SOURCE_FIXTURE_KEY',thinking:'disabled',models:[{id:'forge-model',name:'Forge fixture'}]}})
-    session=await rpc('session/create',{request:{cwd:'/dsh/workspace'}})
+    if(clientSource) workspaceId=(await rpc('workspace/create',{request:{path:'/dsh/workspace'}})).workspace.workspaceId
+    session=await rpc('session/create',{request:workspaceId===undefined?{cwd:'/dsh/workspace'}:{workspaceId}})
     await rpc('session/rename',{request:{sessionId:session.sessionId,title:'Source authoring acceptance'}})
     await rpc('session/selectModel',{request:{sessionId:session.sessionId,provider:'deepseek-official',model:'forge-model'}})
     const installed=await runPhase('install')
@@ -161,18 +275,57 @@ export async function verifySourceAuthoring({ browser,origin,backendUrl,root,dsh
     assert(firstBuild.body.packages.some(pkg=>pkg.name==='is-odd'&&pkg.version==='3.0.1'),'The declared npm dependency is delivered as a private package')
     const sourcePackage=firstBuild.body.packages.find(pkg=>pkg.name===packageName)
     assert(sourcePackage.files.some(file=>file.path==='index.ts')&&sourcePackage.files.some(file=>file.path==='message.ts'))
+    let oldCounter
+    if(clientSource) {
+      assert(sourcePackage.metadata?.dsh?.client,'The built package declares its Client module')
+      assert(sourcePackage.metadata.exports['./client'],'The built package exports its Client artifact')
+      assert(sourcePackage.files.some(file=>'./'+file.path===sourcePackage.metadata.exports['./client']),'The exported Client artifact is delivered')
+      assert(!sourcePackage.files.some(file=>file.path==='client.tsx'),'Client-only TSX is not installed as a Host module')
+      assert.equal(firstBuild.body.clientPackages.react,'18.3.1','React is reused from the fixed page inventory')
+      await selectSession()
+      await expectCounter('v1',0)
+      assert.equal((await command('/test')).result.text,'counter = 1')
+      await expectCounter('v1',1)
+      assert.equal((await command('/test')).result.text,'counter = 2')
+      await expectCounter('v1',2)
+      oldCounter=await counter.elementHandle()
+      await page.screenshot({path:resolve(root,'.data/forge-client-source-v1.png')})
+    }
     const system=model.captured[0].system.find(text=>text.includes('dsh plugin --profile "web" build ./greeting-source'))
     assert(system,'Real model input contains the Worker source-build guidance')
     const logged=installed.events.filter(event=>event.type==='system/message').map(event=>event.data.message.content.filter(part=>part.type==='text').map(part=>part.text).join(''))
     assert(logged.includes(system),'Exported Session log reconstructs the exact model-visible system prompt')
     await runPhase('update');assert.equal((await command('/source-proof')).result.text,'source v2: odd')
+    if(clientSource) {
+      await page.waitForFunction(old=>!old.isConnected,oldCounter)
+      await expectCounter('v2',2)
+      assert.equal((await command('/test')).result.text,'counter = 3')
+      await expectCounter('v2',3)
+      await page.setViewportSize({width:390,height:844})
+      await page.evaluate(async()=>{await new Promise(requestAnimationFrame);await Promise.allSettled(document.getAnimations().filter(animation=>animation.effect?.getComputedTiming().iterations!==Infinity).map(animation=>animation.finished))})
+      const geometry=await counter.evaluate(node=>({left:node.getBoundingClientRect().left,right:node.getBoundingClientRect().right,width:innerWidth,pageWidth:document.documentElement.scrollWidth}))
+      assert(geometry.left>=0&&geometry.right<=390&&geometry.pageWidth<=390,JSON.stringify(geometry))
+      await page.screenshot({path:resolve(root,'.data/forge-client-source-mobile.png')})
+      await page.setViewportSize({width:1280,height:900})
+      await page.evaluate(async()=>{await new Promise(requestAnimationFrame);await Promise.allSettled(document.getAnimations().filter(animation=>animation.effect?.getComputedTiming().iterations!==Infinity).map(animation=>animation.finished))})
+      await page.screenshot({path:resolve(root,'.data/forge-client-source-v2.png')})
+    }
     const active=await local('/__forge/installed');const revision=active.plugins.find(plugin=>plugin.pluginId===pluginId)?.revision
     assert(revision)
     assert(active.batches.some(batch=>batch.paths.length>0),'Source updates emit file-write observations')
+    if(clientSource) {
+      const failedClient=await runPhase('clientbroken')
+      assert.match(failedClient.request.results.at(-1).text,/error|failed|unexpected/i)
+      assert.equal((await local('/__forge/installed')).plugins.find(plugin=>plugin.pluginId===pluginId)?.revision,revision)
+      await expectCounter('v2',3)
+      assert.equal((await command('/source-proof')).result.text,'source v2: odd')
+      await runPhase('clientrepair')
+    }
     const broken=await runPhase('broken')
     assert.match(broken.request.results.at(-1).text,/error|failed|unexpected/i)
     assert.equal((await local('/__forge/installed')).plugins.find(plugin=>plugin.pluginId===pluginId)?.revision,revision)
     assert.equal((await command('/source-proof')).result.text,'source v2: odd')
+    if(clientSource) await expectCounter('v2',3)
     await runPhase('repair')
     assert(page.workers().includes(hostWorker),'Source updates preserve the owning Host Worker; transient shell process Workers may exit')
     assert.equal(await page.evaluate(()=>performance.timeOrigin),documentOrigin)
@@ -182,21 +335,34 @@ export async function verifySourceAuthoring({ browser,origin,backendUrl,root,dsh
     assert(!page.workers().includes(hostWorker),'Reload replaces the Host Worker')
     assert.notEqual(await page.evaluate(()=>performance.timeOrigin),documentOrigin)
     assert.equal((await command('/source-proof')).result.text,'source v2: odd')
+    if(clientSource) {await selectSession();await expectCounter('v2',3)}
     const retained=await runPhase('retained')
     assert(retained.request.results[0].text.includes("import isOdd from 'is-odd'"))
     assert(retained.request.results[1].text.includes('source v2:'))
     assert(retained.request.results[2].text.includes('1.0.1'))
+    if(clientSource) assert(retained.request.results[3].text.includes('data-source-counter'))
     await runPhase('remove')
     assert.equal((await local('/__forge/installed')).plugins.length,0)
     assert.equal(await command('/source-proof'),undefined)
+    if(clientSource) {
+      await counter.waitFor({state:'detached'})
+      await sheet.waitFor({state:'detached'})
+      assert.equal((await counterState()).status,404,'Uninstall removes the Host stream route')
+      assert.equal(await command('/test'),undefined)
+    }
     assert.equal((await local('/__storage/flush',{})).kind,'saved')
     await page.reload();await ready();assert.equal((await local('/__forge/installed')).plugins.length,0)
+    if(clientSource) {assert.equal(await counter.count(),0);assert.equal(await sheet.count(),0);assert.equal((await counterState()).status,404)}
     assert.deepEqual(model.failures,[])
     const observed={model:'private compatible HTTP fixture',toolPath:'session/prompt → Agent policy and tools → virtual dsh → Forge',source:{language:'TypeScript',esm:true,async:true,files:['index.ts','message.ts'],privateDependency:'is-odd@3.0.1'},command:['source v1: odd','source v2: odd'],sameDocumentAndWorkerDuringUpdates:true,fileWriteHooks:true,buildFailurePreservedActiveRevision:true,prompt:{sourceBuildCliVisible:true,reconstructedFromSessionLog:true},coldRestore:{forgeOffline:true,command:true,sourceFiles:true},modelToolRemove:true,removalSurvivesReload:true}
-    const text=JSON.stringify(observed,null,2)+'\n';const expected=resolve(root,'tests/expected/source-authoring.json')
+    if(clientSource) {
+      observed.source.files.push('client.tsx')
+      observed.client={language:'TSX',esm:true,sharedReact:'18.3.1',slot:'conversation.composer.dock',counter:['Counter v1: 0','Counter v1: 1','Counter v1: 2','Counter v2: 2','Counter v2: 3'],hostStream:true,hotReplaced:true,singleComponentAndSubscription:true,failedBuildPreservesUi:true,clientCompilationFailurePreservesUi:true,viewportWidth:390,horizontalOverflow:false,coldRestoreWithForgeOffline:true,removedComponentStyleAndHostRoute:true}
+    }
+    const text=JSON.stringify(observed,null,2)+'\n';const expected=resolve(root,`tests/expected/${clientSource?'client-source-authoring':'source-authoring'}.json`)
     if(refreshSnapshot)await writeFile(expected,text);else assert.equal(text,await readFile(expected,'utf8'))
-    await page.screenshot({path:resolve(root,'.data/forge-source-authoring.png')})
+    await page.screenshot({path:resolve(root,clientSource?'.data/forge-client-source-removed.png':'.data/forge-source-authoring.png')})
     console.log(text)
-  }catch(error){await page.screenshot({path:resolve(root,'.data/forge-source-authoring-failure.png')}).catch(()=>{});console.error(logs.join('\n'));throw error}
+  }catch(error){await page.screenshot({path:resolve(root,clientSource?'.data/forge-client-source-failure.png':'.data/forge-source-authoring-failure.png')}).catch(()=>{});console.error(logs.join('\n'));throw error}
   finally{await context.close();await model.close()}
 }

@@ -11,5 +11,6 @@ export function imageTarget(packed, generation, forgeSharedPackages) {
   if (!Object.keys(hostPackages).length) throw new Error('No base-image package versions found')
   const manifest = JSON.parse(new TextDecoder().decode(packed.files['config/vfs-manifest.json']))
   if (!manifest.clientPackages || !Object.keys(manifest.clientPackages).length) throw new Error('Build the Client package roster before preparing the preview')
-  return { protocol: 1, generation, sharedPackages: forgeSharedPackages(hostPackages, manifest.clientPackages), hostPackages, clientPackages: manifest.clientPackages }
+  return { protocol: 1, generation, sharedPackages: forgeSharedPackages(hostPackages, manifest.clientPackages), hostPackages, clientPackages: manifest.clientPackages,
+    ...packed.clientModules === undefined ? {} : { clientModules: packed.clientModules } }
 }

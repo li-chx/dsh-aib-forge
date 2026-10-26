@@ -1,0 +1,55 @@
+{
+  "model": "private compatible HTTP fixture",
+  "toolPath": "session/prompt → Agent policy and tools → virtual dsh → Forge",
+  "source": {
+    "language": "TypeScript",
+    "esm": true,
+    "async": true,
+    "files": [
+      "index.ts",
+      "message.ts",
+      "client.tsx"
+    ],
+    "privateDependency": "is-odd@3.0.1"
+  },
+  "command": [
+    "source v1: odd",
+    "source v2: odd"
+  ],
+  "sameDocumentAndWorkerDuringUpdates": true,
+  "fileWriteHooks": true,
+  "buildFailurePreservedActiveRevision": true,
+  "prompt": {
+    "sourceBuildCliVisible": true,
+    "reconstructedFromSessionLog": true
+  },
+  "coldRestore": {
+    "forgeOffline": true,
+    "command": true,
+    "sourceFiles": true
+  },
+  "modelToolRemove": true,
+  "removalSurvivesReload": true,
+  "client": {
+    "language": "TSX",
+    "esm": true,
+    "sharedReact": "18.3.1",
+    "slot": "conversation.composer.dock",
+    "counter": [
+      "Counter v1: 0",
+      "Counter v1: 1",
+      "Counter v1: 2",
+      "Counter v2: 2",
+      "Counter v2: 3"
+    ],
+    "hostStream": true,
+    "hotReplaced": true,
+    "singleComponentAndSubscription": true,
+    "failedBuildPreservesUi": true,
+    "clientCompilationFailurePreservesUi": true,
+    "viewportWidth": 390,
+    "horizontalOverflow": false,
+    "coldRestoreWithForgeOffline": true,
+    "removedComponentStyleAndHostRoute": true
+  }
+}
