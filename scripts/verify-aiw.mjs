@@ -90,8 +90,24 @@ export async function verifyAiw({ browser, origin, backendUrl, root, target, ref
       .map(animation => animation.finished.catch(() => {})))
   })
   const flush = async () => {
-    const result = await page.evaluate(async () => (await window.__DSH_TRANSPORT__.fetch('/__storage/flush', { method: 'POST' })).json())
-    assert.equal(result.kind, 'saved', JSON.stringify(result))
+    const received = Promise.withResolvers()
+    await page.exposeFunction('recordAiwStorageSave', result => received.resolve(result))
+    await page.evaluate(() => {
+      const storage = window.__DSH_TRANSPORT__.storage
+      const flush = storage.flush.bind(storage)
+      storage.flush = async signal => {
+        const result = await flush(signal)
+        await window.recordAiwStorageSave(result)
+        return result
+      }
+    })
+    const timeout = setTimeout(() => received.reject(new Error('AIW save acknowledgement did not arrive')), 30000)
+    try {
+      await panel.getByRole('button', { name: 'Save now', exact: true }).click()
+      const result = await received.promise
+      assert.equal(result.kind, 'saved', JSON.stringify(result))
+      await panel.locator('[data-aiw-storage="saved"]').waitFor()
+    } finally { clearTimeout(timeout) }
   }
   try {
     console.log('AIW: opening application')
@@ -100,6 +116,8 @@ export async function verifyAiw({ browser, origin, backendUrl, root, target, ref
     await observeActions()
     console.log('AIW: sidebar page mounted')
     assert.equal(await page.getByRole('button', { name: 'DSH Forge', exact: true }).count(), 0)
+    assert.equal(await page.locator('[data-worker-storage]').count(), 0)
+    assert.equal(await panel.getByRole('button', { name: 'Save now', exact: true }).count(), 1)
     const positions = await page.evaluate(() => {
       const buttons = [...document.querySelectorAll('button')]
       return { plugins: buttons.findIndex(button => button.textContent === 'Plugins'), aiw: buttons.findIndex(button => button.textContent === 'dsh-aiw'), tasks: buttons.findIndex(button => button.textContent === 'Automation tasks') }
@@ -296,7 +314,7 @@ export async function verifyAiw({ browser, origin, backendUrl, root, target, ref
       assert(chineseGeometry.scroll <= chineseGeometry.width, JSON.stringify(chineseGeometry))
       await chinesePage.screenshot({ path: resolve(root, '.data/aiw-chinese-mobile.png') })
     } finally { await chineseContext.close() }
-    const observed = { sidebar: { label: 'dsh-aiw', belowPlugins: true, beforeAutomationTasks: true, noToolbarForgeButton: true }, tabs: ['Plugins', 'Files', 'Command line', 'Backups', 'Settings'], files: { create: true, read: true, edit: true, rename: true, delete: true, dirtyNavigationProtected: true, escapeKeepsDraft: true, explicitDiscard: true }, shell: { virtualCwdAndRead: true, nonzeroVisible: true }, projects: { hostAndClient: true, retainedClientArtifact: true, buildAndUpdate: true, historyAfterArtifactGc: true, offlineRestore: true, restoredSource: true, survivesReload: true }, backup: { actualDownload: true, previewDoesNotWrite: true, importIntoNewDirectory: true, traversalRejectedWithoutWrites: true, pluginRoundTripOffline: true, pluginPreviewDoesNotActivate: true }, responsive: { width: 390, horizontalOverflow: false, singleLineTabs: true, englishAndChinese: true, lightAndDark: true }, paidModelCalls: 0 }
+    const observed = { storage: { saveInsideAiw: true, acknowledgedFlush: true, noRoutineToolbar: true }, sidebar: { label: 'dsh-aiw', belowPlugins: true, beforeAutomationTasks: true, noToolbarForgeButton: true }, tabs: ['Plugins', 'Files', 'Command line', 'Backups', 'Settings'], files: { create: true, read: true, edit: true, rename: true, delete: true, dirtyNavigationProtected: true, escapeKeepsDraft: true, explicitDiscard: true }, shell: { virtualCwdAndRead: true, nonzeroVisible: true }, projects: { hostAndClient: true, retainedClientArtifact: true, buildAndUpdate: true, historyAfterArtifactGc: true, offlineRestore: true, restoredSource: true, survivesReload: true }, backup: { actualDownload: true, previewDoesNotWrite: true, importIntoNewDirectory: true, traversalRejectedWithoutWrites: true, pluginRoundTripOffline: true, pluginPreviewDoesNotActivate: true }, responsive: { width: 390, horizontalOverflow: false, singleLineTabs: true, englishAndChinese: true, lightAndDark: true }, paidModelCalls: 0 }
     const text = JSON.stringify(observed, null, 2) + '\n'
     const golden = resolve(root, 'tests/expected/aiw.json')
     if (refreshSnapshot) await writeFile(golden, text); else assert.equal(text, await readFile(golden, 'utf8'))

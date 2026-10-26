@@ -1,4 +1,9 @@
 {
+  "storage": {
+    "saveInsideAiw": true,
+    "acknowledgedFlush": true,
+    "noRoutineToolbar": true
+  },
   "sidebar": {
     "label": "dsh-aiw",
     "belowPlugins": true,

@@ -1,6 +1,6 @@
 /** Real IndexedDB cold starts, durable plugin lifecycle and visible failed writes in Chrome. */
 import assert from 'node:assert/strict'
-import { readyAiw } from './aiw-page.mjs'
+import { openAiw, readyAiw } from './aiw-page.mjs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
@@ -62,7 +62,6 @@ export async function verifyPersistence({ browser, origin, backendUrl, target, r
   const flush = async targetPage => {
     const value = await runtime(targetPage, '/__storage/flush', {})
     assert.equal(value.kind, 'saved', JSON.stringify(value))
-    await targetPage.locator('[data-worker-storage="saved"]').waitFor()
     return value
   }
   let firstReady = true
@@ -71,15 +70,7 @@ export async function verifyPersistence({ browser, origin, backendUrl, target, r
     await readyAiw(targetPage, { fresh: firstReady || fresh })
     firstReady = false
     await targetPage.getByRole('button', { name: 'Plugins', exact: true }).waitFor()
-    const layout = await targetPage.evaluate(() => {
-      const bar = document.querySelector('[data-worker-storage]')
-      const root = document.getElementById('root')
-      const save = [...bar.querySelectorAll('button')].find(button => button.textContent === 'Save now')
-      return {display:getComputedStyle(bar).display,position:getComputedStyle(save).position,barBottom:bar.getBoundingClientRect().bottom,appTop:root.getBoundingClientRect().top}
-    })
-    assert.equal(layout.display, 'flex', 'Persistence toolbar CSS must load with the preview bootstrap')
-    assert.equal(layout.position, 'static', 'Save action belongs in the toolbar rather than overlapping menus')
-    assert(layout.appTop >= layout.barBottom, JSON.stringify(layout))
+    assert.equal(await targetPage.locator('[data-worker-storage]').count(), 0, 'Routine saving must not occupy a global toolbar')
   }
   const install = async (version, targetPage = page) => {
     const response = await fetch(`${backendUrl}/v1/packages/builds`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ protocol: 1, generation: target.generation, pluginId: name, spec: `${name}@${version}` }) })
@@ -262,8 +253,10 @@ export async function verifyPersistence({ browser, origin, backendUrl, target, r
     assert.equal(await page.locator('[data-persistence-client]').count(), 0)
     assert.equal(await command('/forge-store-read'), undefined)
     await page.screenshot({path:resolve(root,'.data/forge-storage-saved.png')})
+    await page.keyboard.press('Escape')
+    await openAiw(page)
     await page.setViewportSize({width:390,height:844})
-    const mobile = await page.locator('[data-worker-storage]').evaluate(bar => ({ left:bar.getBoundingClientRect().left,right:bar.getBoundingClientRect().right,width:innerWidth }))
+    const mobile = await page.locator('[data-aiw-storage]').evaluate(bar => ({ left:bar.getBoundingClientRect().left,right:bar.getBoundingClientRect().right,width:innerWidth }))
     assert(mobile.left >= 0 && mobile.right <= mobile.width, JSON.stringify(mobile))
     await page.screenshot({path:resolve(root,'.data/forge-storage-mobile.png')})
     await page.evaluate(() => document.body.setAttribute('data-ds-dark-theme',''))
