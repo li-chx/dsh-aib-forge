@@ -103,6 +103,8 @@ client.dependencies 中的私有浏览器依赖只打包进 Client 产物，不�
 
 dsh-plugin@2.2.1 的 Client 有显式版本兼容修复：安装队列先写入仅含 npmPackage 的记录，版本同步完成前 UI 比较 undefined 会导致设置槽位崩溃。Forge 仅在该版本的已知函数及唯一比较语句匹配时添加版本存在检查，缺省版本暂不比较，完整记录沿用原逻辑。目标不匹配时返回 CLIENT_COMPATIBILITY_MISMATCH；成功安装、更新及卸载已完成 Worker 和 Client 热加载，因此移除这些成功路径的自动整页刷新，并调整中英文提示；保留主动重启后的刷新及失败重试。补丁逐个验证目标语句数量，其他包和版本不变，修改后的字节生成独立内容哈希及 revision。
 
+dsh-plugin@2.2.1、2.2.2、2.2.3 的 Host 安装前探测另有[浏览器兼容处理](usage.md#marketplace-browser-compatibility)：官方 npm 的探测使用允许 CORS 的市场包元数据接口。修复只作用于发布包的已知调用点，重新安装市场后生效。
+
 Node 模块能力由运行中的 Worker 决定，后端只使用同一构建的 lowerModuleSource 转换代码，不维护静态模块引用准入表。缺失 namespace 或不支持的操作在实际 resolve/调用时失败，不用成功 stub 替代。可选 DNS、V8 操作仍抛平台不可用错误；插件可自行捕获降级。发布成功不等于所有功能可执行，固定共享包版本与代际保护不变。
 
 ## 前端应用与模块身份

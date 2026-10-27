@@ -27,6 +27,8 @@ docker compose up -d --build
 
 完整配置、本地运行、协议与兼容性限制见[使用参考](docs/usage.md)及[设计说明](docs/design.md)。
 
+插件市场 `dsh-plugin@2.2.1`、`2.2.2`、`2.2.3` 的 npm 安装前探测包含[浏览器兼容修复](docs/usage.md#marketplace-browser-compatibility)。更新 Forge 后，需要在 dsh-aib 中重新安装或更新市场，即使版本号相同，也要重新构建以取得修复后的产物。
+
 ## 许可证
 
 本项目采用 [MIT License](LICENSE)，Copyright (c) 2026 li-chx。依赖及构建时引入的第三方代码遵循各自许可证。

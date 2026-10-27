@@ -8,6 +8,7 @@ import { z } from 'zod'
 import { readPublishedAssets } from './package-assets.js'
 import type { PublishedAssets } from './package-assets.js'
 import { collectPackageFiles, resolveResourceLimits, validateResourcePath } from './package-resources.js'
+import { applyHostCompatibility } from './host-compatibility.js'
 import type { ResourceLimits } from './package-resources.js'
 import { ForgeError, packageName } from './protocol.js'
 
@@ -125,6 +126,6 @@ export class PnpmPackageResolver implements PackageResolver {
     validateResourcePath(outputEntry)
     const published = await readPublishedAssets(directory, manifest.name, manifest, outputEntry, this.resourceLimits)
     const { modules, assets } = await collectPackageFiles(directory, published?.assets ?? {}, this.resourceLimits)
-    return { directory, entry: file, outputEntry, name: manifest.name, version: manifest.version, dependencies: manifest.dependencies ?? {}, peerDependencies: manifest.peerDependencies ?? {}, ...(manifest.peerDependenciesMeta === undefined ? {} : { peerDependenciesMeta: manifest.peerDependenciesMeta }), ...published, assets, modules, resourceLimits: this.resourceLimits }
+    return { directory, entry: file, outputEntry, name: manifest.name, version: manifest.version, dependencies: manifest.dependencies ?? {}, peerDependencies: manifest.peerDependencies ?? {}, ...(manifest.peerDependenciesMeta === undefined ? {} : { peerDependenciesMeta: manifest.peerDependenciesMeta }), ...published, assets, modules: applyHostCompatibility(manifest.name, manifest.version, modules), resourceLimits: this.resourceLimits }
   }
 }
