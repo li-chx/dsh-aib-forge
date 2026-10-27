@@ -1,0 +1,41 @@
+services:
+  forge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        DSH_REPOSITORY: ${DSH_REPOSITORY:-https://github.com/li-chx/deepseek-harness-all-in-browser.git}
+        DSH_REF: ${DSH_REF:-ccec8aaac95174eb5020b919732354bf1df2bb2d}
+    image: dsh-forge:local
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${FORGE_BIND_IP:-127.0.0.1}:${FORGE_PORT:-36936}:36936"
+    volumes:
+      - forge-artifacts:/var/lib/dsh-forge/artifacts
+    command:
+      - --target
+      - /app/runtime/target.json
+      - --transformer
+      - /app/runtime/transformer.mjs
+      - --host
+      - 0.0.0.0
+      - --port
+      - "36936"
+      - --storage
+      - /var/lib/dsh-forge/artifacts
+      - --origin
+      - ${FORGE_ORIGIN:?Set FORGE_ORIGIN to the frontend origin, for example https://aib.example.com}
+      - --registry
+      - ${FORGE_REGISTRY:-https://registry.npmjs.org/}
+      - --max-builds
+      - "${FORGE_MAX_BUILDS:-2}"
+      - --max-request-bytes
+      - "${FORGE_MAX_REQUEST_BYTES:-2097152}"
+      - --install-timeout-ms
+      - "${FORGE_INSTALL_TIMEOUT_MS:-120000}"
+      - --allow-host-patch-upgrade
+      - "@deepseek-ai/cordis"
+
+volumes:
+  forge-artifacts:

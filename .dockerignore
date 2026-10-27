@@ -1,0 +1,11 @@
+.git
+.git/**
+node_modules
+dist
+.data
+.env
+.env.*
+*.log
+*.pem
+*.key
+.credentials.yaml

@@ -1,6 +1,6 @@
 # DSH Forge：插件构建与热更新
 
-本文件说明服务职责、前后端协议、更新流程和验证范围。运行命令及不支持的包类型见 [README](../README.md)。
+本文件说明服务职责、前后端协议、更新流程和验证范围。运行命令及不支持的包类型见 [使用参考](usage.md)。
 
 ## 范围
 
@@ -93,13 +93,13 @@ Client 源码使用普通 Cordis 插件导出，Forge 通过 esbuild 浏览器�
 
 client.dependencies 中的私有浏览器依赖只打包进 Client 产物，不授予 Host 私有映射；client.peerDependencies 不自动安装。Client 导入可使用两组声明及根声明，同名跨面声明在本代际必须使用相同范围字符串。每个私有依赖自己的引用也按其 manifest 检查，并验证供应版本和安装脚本策略。准确 clientModules 请求复用页面 seed；带 inject 的 Client 图包可通过包名或 /client 请求，其他 DSH/Cordis 请求不允许打包副本。浏览器解析使用 browser 条件，不提供原生 Node 模块，也不提供私有 Client 包的动态运行时解析器。
 
-该入口不接受自带根 package.json、自定义显示资源导出、CSS 或非 JSON 资源 import、代码拆分或顶层 await。样式可由 JavaScript 的生命周期 effect 或 React 样式元素管理。输入和产物受资源总量限制，构建不执行插件代码，也不做 TypeScript 类型检查。完整 forge.json 示例见 [Client sources](../README.md#client-sources)。
+该入口不接受自带根 package.json、自定义显示资源导出、CSS 或非 JSON 资源 import、代码拆分或顶层 await。样式可由 JavaScript 的生命周期 effect 或 React 样式元素管理。输入和产物受资源总量限制，构建不执行插件代码，也不做 TypeScript 类型检查。完整 forge.json 示例见 [Client sources](usage.md#client-sources)。
 
 ## 已发布 npm 插件
 
 `POST /v1/packages/builds` 接收 `{protocol:1,generation,pluginId,spec}`，例如 `spec: "dsh-plugin@2.2.1"`。spec 仅允许 npm 包名及可选 semver 版本范围，省略范围使用 `*`；额外支持 `@latest`，先查询 registry 标签对应的准确版本再安装，不放宽源码请求中的依赖范围校验。不接受文件路径、URL、别名或其他 dist-tag。后端在隔离目录解析已发布入口，通过同一 Host 编译流程生成清单。
 
-`packages[].metadata` 保留编译器实际使用的包声明，未消费的附加元数据被剔除。支持的 bundle 包含恰好一个自身插件插入条目，并可通过其他根级行覆盖既有条目的字面量配置或启停状态；patch 原始字节由原生加载器合成。发布包的 Host 入口保留包内目录位置，普通资源按原相对路径分发，package.json 由前端合成。已构建的 Client 入口作为独立产物保留，此路径不编译 TSX 源码。字段、资源限额及支持子集见 [Published plugin builds](../README.md#published-plugin-builds)。
+`packages[].metadata` 保留编译器实际使用的包声明，未消费的附加元数据被剔除。支持的 bundle 包含恰好一个自身插件插入条目，并可通过其他根级行覆盖既有条目的字面量配置或启停状态；patch 原始字节由原生加载器合成。发布包的 Host 入口保留包内目录位置，普通资源按原相对路径分发，package.json 由前端合成。已构建的 Client 入口作为独立产物保留，此路径不编译 TSX 源码。字段、资源限额及支持子集见 [Published plugin builds](usage.md#published-plugin-builds)。
 
 dsh-plugin@2.2.1 的 Client 有显式版本兼容修复：安装队列先写入仅含 npmPackage 的记录，版本同步完成前 UI 比较 undefined 会导致设置槽位崩溃。Forge 仅在该版本的已知函数及唯一比较语句匹配时添加版本存在检查，缺省版本暂不比较，完整记录沿用原逻辑。目标不匹配时返回 CLIENT_COMPATIBILITY_MISMATCH；成功安装、更新及卸载已完成 Worker 和 Client 热加载，因此移除这些成功路径的自动整页刷新，并调整中英文提示；保留主动重启后的刷新及失败重试。补丁逐个验证目标语句数量，其他包和版本不变，修改后的字节生成独立内容哈希及 revision。
 
