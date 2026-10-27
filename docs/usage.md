@@ -8,7 +8,7 @@ The service uses Node.js and TypeScript. Local files implement the artifact stor
 
 The root `Dockerfile` and `compose.yaml` start the backend over plain HTTP. Nginx owns HTTPS and certificates; no Nginx or TLS listener runs in this container. The default published address is `127.0.0.1:36936`, suitable for Nginx running on the same host.
 
-Copy `.env.example` to `.env`, then set `FORGE_ORIGIN` to the browser frontend's exact origin, such as `https://aib.example.com`, without a path or trailing slash. This is the frontend origin permitted by CORS, not the backend's internal HTTP address. Set `DSH_REF` to the published AIB commit used to build your frontend. The supplied value targets the current rc.2 AIB deployment.
+Copy `.env.example` to `.env`, then set `FORGE_ORIGIN` to the browser frontend's exact origin, such as `https://dsh-aiw.lichx.top`, without a path or trailing slash. This is the frontend origin permitted by CORS, not the backend's internal HTTP address. The frontend is deployed independently to EO or another static host.
 
 ```sh
 cp .env.example .env
@@ -17,7 +17,7 @@ docker compose up -d --build
 docker compose logs -f forge
 ```
 
-The image build fetches that AIB revision, builds its artifacts and derives the fixed target from its packed filesystem image. It bundles the matching module transformer separately; the runtime image contains the Forge server, production dependencies and that target/compiler pair. A sibling AIB checkout is not required on the deployment host. The first build needs network access to the AIB repository, npm and the Node base images.
+The image build compiles only Forge and installs its dependencies. It copies the committed target/compiler pair from [runtime/](../runtime/README.md); it does not fetch, build or serve the frontend. The deployment host needs only this backend checkout and network access to npm and the Node base images. The runtime image contains the Forge server, production dependencies, the target/compiler pair and license notices.
 
 Forge artifacts use the `forge-artifacts` named volume and survive container replacement. `docker compose down` retains this volume; adding `--volumes` deletes it. The container runs as the Node user and includes a health check against `/v1/target`. Check the HTTP listener with:
 
@@ -42,7 +42,7 @@ The frontend's Forge URL points to that public Nginx address, for example `https
 
 The Compose configuration enables the existing Cordis patch-version admission for published plugins that request an older exact patch. It preserves the frontend's actual Cordis version. Other limits and the npm registry are configurable through `.env.example`. CORS does not provide authentication; the existing trusted-ingress requirement below still applies.
 
-To refresh the backend for another frontend revision, change `DSH_REF` and rebuild with `docker compose up -d --build`.
+When a frontend update changes the Worker generation, compiler or provided package/module roster, maintainers regenerate and commit the matching [target/compiler pair](../runtime/README.md) before deploying that frontend. Deployment hosts then update this backend checkout and rebuild with `docker compose up -d --build`.
 
 ## Run locally
 

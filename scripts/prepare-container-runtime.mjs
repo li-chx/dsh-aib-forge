@@ -1,5 +1,6 @@
 /** Build the fixed target and standalone compiler from the selected frontend checkout. */
-import { mkdir, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
@@ -27,4 +28,7 @@ await build({
   outfile: resolve(output, 'transformer.mjs'), bundle: true, platform: 'node', format: 'esm', target: 'node24',
 })
 await writeFile(resolve(output, 'target.json'), JSON.stringify(target, null, 2) + '\n')
+await copyFile(resolve(dshRoot, 'LICENSE'), resolve(output, 'LICENSE.DeepSeek'))
+const requireRuntime = createRequire(resolve(runtimeRoot, 'package.json'))
+await copyFile(resolve(requireRuntime.resolve('acorn/package.json'), '../LICENSE'), resolve(output, 'LICENSE.acorn'))
 console.log(JSON.stringify({ output, generation: target.generation, hostPackages: Object.keys(target.hostPackages).length }))

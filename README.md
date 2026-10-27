@@ -17,9 +17,11 @@ DSH AIB Forge 是 [DeepSeek Harness AIB](https://github.com/li-chx/deepseek-harn
 
 ```sh
 cp .env.example .env
-# 编辑 .env：设置 FORGE_ORIGIN，并让 DSH_REF 与前端构建版本一致。
+# 编辑 .env：FORGE_ORIGIN 为 EO 前端的实际访问源地址。
 docker compose up -d --build
 ```
+
+这里只构建和启动 Forge 后端，不拉取、构建或托管前端。前端独立部署到 EO，`FORGE_ORIGIN` 填写其实际访问源地址，例如 `https://dsh-aiw.lichx.top`。后端所需的版本清单及模块编译器已包含在 [runtime/](runtime/README.md) 中，需与所部署的前端匹配。
 
 默认通过 `127.0.0.1:36936` 提供 HTTP 服务，由外部 Nginx 终结 HTTPS。构建产物保存在命名卷中。服务没有内置用户认证，公开部署需要可信入口的认证、资源限制和构建隔离。
 

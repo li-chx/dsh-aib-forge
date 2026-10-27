@@ -3,9 +3,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        DSH_REPOSITORY: ${DSH_REPOSITORY:-https://github.com/li-chx/deepseek-harness-all-in-browser.git}
-        DSH_REF: ${DSH_REF:-ccec8aaac95174eb5020b919732354bf1df2bb2d}
     image: dsh-forge:local
     init: true
     restart: unless-stopped

@@ -7,22 +7,8 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY tsconfig.json ./
 COPY src ./src
-COPY scripts/dsh-path.mjs scripts/image-target.mjs scripts/prepare-container-runtime.mjs ./scripts/
-RUN pnpm build
-
-# Match this ref to the AIB frontend being deployed.
-ARG DSH_REPOSITORY=https://github.com/li-chx/deepseek-harness-all-in-browser.git
-ARG DSH_REF=ccec8aaac95174eb5020b919732354bf1df2bb2d
-RUN git init /build/harness \
-    && git -C /build/harness remote add origin "${DSH_REPOSITORY}" \
-    && git -C /build/harness fetch --depth=1 origin "${DSH_REF}" \
-    && git -C /build/harness checkout --detach FETCH_HEAD
-RUN cd /build/harness \
-    && pnpm install --frozen-lockfile \
-    && pnpm run build:artifacts
-RUN node scripts/prepare-container-runtime.mjs \
-      --dsh-root /build/harness --out-dir /build/runtime \
-    && pnpm prune --prod
+RUN pnpm build && pnpm prune --prod
+COPY runtime ./runtime
 
 FROM node:24-bookworm-slim AS runtime
 RUN npm install --global pnpm@11.28.5 \
@@ -33,7 +19,8 @@ WORKDIR /app
 COPY --from=build /build/forge/package.json ./
 COPY --from=build /build/forge/node_modules ./node_modules
 COPY --from=build /build/forge/dist ./dist
-COPY --from=build /build/runtime ./runtime
+COPY --from=build /build/forge/runtime ./runtime
+COPY LICENSE ./LICENSE
 USER node
 EXPOSE 36936
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
