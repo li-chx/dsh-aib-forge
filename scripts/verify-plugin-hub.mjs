@@ -11,6 +11,7 @@ import { verifyMobilePlugin } from './verify-mobile-plugin.mjs'
 import { verifyExtraPlugins } from './verify-extra-plugins.mjs'
 import { verifyIndustryPlugin } from './verify-industry-plugin.mjs'
 import { overrideFixtures, verifyBundleOverrides } from './verify-bundle-overrides.mjs'
+import { multiBundleFixtures, verifyMultiBundle } from './verify-multi-bundle.mjs'
 import { dnsFixtures, unsupportedNetName, verifyOptionalDns } from './verify-optional-dns.mjs'
 import { v8Fixtures, verifyOptionalV8 } from './verify-optional-v8.mjs'
 import { verifyContextPlugin } from './verify-context-plugin.mjs'
@@ -28,7 +29,7 @@ import { parseArgs } from 'node:util'
 import { FileArtifactStore, ForgeCompiler, PnpmPackageResolver, createForgeHandler, loadDshLowerer, startForgeServer } from '../dist/index.js'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
-const { values } = parseArgs({ options: { 'dsh-root': { type: 'string' }, 'preview-root': { type: 'string' }, 'persistence-only': { type: 'boolean', default: false }, 'source-authoring-only': { type: 'boolean', default: false }, 'client-source-only': { type: 'boolean', default: false }, 'aiw-only': { type: 'boolean', default: false }, host: { type: 'string', default: '127.0.0.1' }, chinese: { type: 'boolean', default: false }, 'ui-install': { type: 'boolean', default: true }, 'native-enable': { type: 'boolean', default: true }, 'refresh-snapshot': { type: 'boolean', default: false } } })
+const { values } = parseArgs({ options: { 'dsh-root': { type: 'string' }, 'preview-root': { type: 'string' }, 'multi-bundle-only': { type: 'boolean', default: false }, 'persistence-only': { type: 'boolean', default: false }, 'source-authoring-only': { type: 'boolean', default: false }, 'client-source-only': { type: 'boolean', default: false }, 'aiw-only': { type: 'boolean', default: false }, host: { type: 'string', default: '127.0.0.1' }, chinese: { type: 'boolean', default: false }, 'ui-install': { type: 'boolean', default: true }, 'native-enable': { type: 'boolean', default: true }, 'refresh-snapshot': { type: 'boolean', default: false } } })
 let chinese = values.chinese
 const zhCopy = { 'Install npm package': '安装 npm 包', 'Account menu': '账号菜单', Settings: '设置', 'Plugin Hub': '插件市场' }
 const copy = text => chinese ? zhCopy[text] ?? text : text
@@ -100,7 +101,9 @@ try {
     return response
   }, { hostname: '127.0.0.1', port: 0 })
   browser = await chromium.launch({ channel: 'chrome', headless: true })
-  if (values['aiw-only']) {
+  if (values['multi-bundle-only']) {
+    await verifyMultiBundle({ browser, origin, backendUrl: backend.url, target, root, refreshSnapshot: values['refresh-snapshot'] })
+  } else if (values['aiw-only']) {
     await verifyAiw({ browser, origin, backendUrl: backend.url, root, target, refreshSnapshot: values['refresh-snapshot'] })
   } else if (values['source-authoring-only']) {
     await verifySourceAuthoring({ browser,origin,backendUrl:backend.url,target,root,dshRoot,refreshSnapshot:values['refresh-snapshot'] })
@@ -447,7 +450,7 @@ async function startRegistry() {
   await tar.c({ cwd: directory, file: tarballPath, gzip: true }, ['package'])
   const tarball = await readFile(tarballPath)
   const fixturePackages = new Map()
-  for (const fixture of [...persistenceFixtures(), ...overrideFixtures(fixtureName), ...dnsFixtures(), ...v8Fixtures(), ...dependencyFixtures(target), ...runtimeLoadingFixtures(target)]) {
+  for (const fixture of [...multiBundleFixtures(), ...persistenceFixtures(), ...overrideFixtures(fixtureName), ...dnsFixtures(), ...v8Fixtures(), ...dependencyFixtures(target), ...runtimeLoadingFixtures(target)]) {
     const folder = join(temporary, `${fixture.manifest.name}-${fixture.manifest.version}`)
     await mkdir(join(folder, 'package'), { recursive: true })
     await writeFile(join(folder, 'package/package.json'), JSON.stringify(fixture.manifest))

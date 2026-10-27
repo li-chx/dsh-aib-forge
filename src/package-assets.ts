@@ -71,20 +71,24 @@ export async function readPublishedAssets(directory: string, name: string, raw: 
       }
     })
     const id = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/)
-    const entry = z.object({ id, name: z.literal(name), config: z.json().optional() }).strict()
-    const insertion = z.object({ insert: z.array(entry).length(1) }).strict()
+    const moduleName = z.string().refine(value => value === name || value.startsWith(name + '/')
+      && value.slice(name.length + 1).split('/').every(part => /^[a-zA-Z0-9_@.+-]+$/.test(part) && !['.', '..', 'node_modules'].includes(part)), 'Entry must load its published package or a safe subpath')
+    const entry = z.object({ id, name: moduleName, config: z.json().optional() }).strict()
+    const insertion = z.object({ insert: z.array(entry).min(1) }).strict()
     const override = z.object({ id, config: z.json().optional(), disabled: z.boolean().nullable().optional() }).strict()
       .refine(row => Object.hasOwn(row, 'config') || Object.hasOwn(row, 'disabled'), 'Override requires config or disabled')
     const rows = z.array(z.unknown()).min(1).safeParse(patch.toJSON())
     if (!rows.success) throw new ForgeError('BUNDLE_UNSUPPORTED', `${subject}: expected patch rows; ${issueDetails(rows.error)}`)
-    let insertedId: string | undefined
+    const insertedIds = new Set<string>()
     const overrides = new Set<string>()
     for (const [index, value] of rows.data.entries()) {
       if (value !== null && typeof value === 'object' && Object.hasOwn(value, 'insert')) {
         const parsed = insertion.safeParse(value)
-        if (!parsed.success) throw new ForgeError('BUNDLE_UNSUPPORTED', `${subject} row ${index}: expected one self-package insert entry with only id/name/config; ${issueDetails(parsed.error)}`)
-        if (insertedId !== undefined) throw new ForgeError('BUNDLE_UNSUPPORTED', `${subject} row ${index}: only one self-package insert row is supported`)
-        insertedId = parsed.data.insert[0]!.id
+        if (!parsed.success) throw new ForgeError('BUNDLE_UNSUPPORTED', `${subject} row ${index}: expected package insert entries with only id/name/config; ${issueDetails(parsed.error)}`)
+        for (const entry of parsed.data.insert) {
+          if (insertedIds.has(entry.id)) throw new ForgeError('BUNDLE_UNSUPPORTED', `${subject} row ${index}: duplicate inserted id ${entry.id}`)
+          insertedIds.add(entry.id)
+        }
       } else {
         const parsed = override.safeParse(value)
         if (!parsed.success) throw new ForgeError('BUNDLE_UNSUPPORTED', `${subject} row ${index}: override accepts only id/config/disabled; ${issueDetails(parsed.error)}`)
@@ -92,8 +96,10 @@ export async function readPublishedAssets(directory: string, name: string, raw: 
         overrides.add(parsed.data.id)
       }
     }
-    if (insertedId === undefined) throw new ForgeError('BUNDLE_UNSUPPORTED', `${subject}: exactly one self-package insert row is required`)
-    if (overrides.has(insertedId)) throw new ForgeError('BUNDLE_UNSUPPORTED', `${subject}: override cannot target its own inserted id ${insertedId}`)
+    if (insertedIds.size === 0) throw new ForgeError('BUNDLE_UNSUPPORTED', `${subject}: at least one package insert entry is required`)
+    for (const id of insertedIds) {
+      if (overrides.has(id)) throw new ForgeError('BUNDLE_UNSUPPORTED', `${subject}: override cannot target its own inserted id ${id}`)
+    }
     assets[asset.path] = asset.bytes
     metadata.dsh!.bundle = { patch: `./${asset.path}` }
     exports = { ...exportSubpaths(exports, outputEntry), [`./${asset.path}`]: `./${asset.path}`, './package.json': './package.json' }

@@ -99,7 +99,7 @@ client.dependencies 中的私有浏览器依赖只打包进 Client 产物，不�
 
 `POST /v1/packages/builds` 接收 `{protocol:1,generation,pluginId,spec}`，例如 `spec: "dsh-plugin@2.2.1"`。spec 仅允许 npm 包名及可选 semver 版本范围，省略范围使用 `*`；额外支持 `@latest`，先查询 registry 标签对应的准确版本再安装，不放宽源码请求中的依赖范围校验。不接受文件路径、URL、别名或其他 dist-tag。后端在隔离目录解析已发布入口，通过同一 Host 编译流程生成清单。
 
-`packages[].metadata` 保留编译器实际使用的包声明，未消费的附加元数据被剔除。支持的 bundle 包含恰好一个自身插件插入条目，并可通过其他根级行覆盖既有条目的字面量配置或启停状态；patch 原始字节由原生加载器合成。发布包的 Host 入口保留包内目录位置，普通资源按原相对路径分发，package.json 由前端合成。已构建的 Client 入口作为独立产物保留，此路径不编译 TSX 源码。字段、资源限额及支持子集见 [Published plugin builds](usage.md#published-plugin-builds)。
+`packages[].metadata` 保留编译器实际使用的包声明，未消费的附加元数据被剔除。支持的 bundle 可包含多个自身包根入口或安全子路径的插入条目，条目 id 在整个 patch 内唯一，并可通过其他根级行覆盖既有条目的字面量配置或启停状态；patch 原始字节由原生加载器合成。发布包的 Host 入口保留包内目录位置，普通资源按原相对路径分发，package.json 由前端合成。已构建的 Client 入口作为独立产物保留，此路径不编译 TSX 源码。字段、资源限额及支持子集见 [Published plugin builds](usage.md#published-plugin-builds)。
 
 dsh-plugin@2.2.1 的 Client 有显式版本兼容修复：安装队列先写入仅含 npmPackage 的记录，版本同步完成前 UI 比较 undefined 会导致设置槽位崩溃。Forge 仅在该版本的已知函数及唯一比较语句匹配时添加版本存在检查，缺省版本暂不比较，完整记录沿用原逻辑。目标不匹配时返回 CLIENT_COMPATIBILITY_MISMATCH；成功安装、更新及卸载已完成 Worker 和 Client 热加载，因此移除这些成功路径的自动整页刷新，并调整中英文提示；保留主动重启后的刷新及失败重试。补丁逐个验证目标语句数量，其他包和版本不变，修改后的字节生成独立内容哈希及 revision。
 

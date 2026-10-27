@@ -72,8 +72,9 @@ test('bundle rejects executable rows, nonfinite values and unsupported state fie
   }
   for (const patch of [
     '- insert: [{id: sample, name: another}]',
-    '- insert: [{id: sample, name: sample}, {id: other, name: sample}]',
-    '- insert: [{id: sample, name: sample}]\n- insert: [{id: other, name: sample}]',
+    '- insert: []',
+    '- insert: [{id: sample, name: sample}, {id: sample, name: sample}]',
+    '- insert: [{id: sample, name: sample}]\n- insert: [{id: sample, name: sample}]',
     '- insert: [{id: sample, name: sample}]\n  remove: [other]',
   ]) {
     await writeFile(join(root, 'cordis.patch.yml'), patch)
@@ -140,7 +141,26 @@ test('override admission rejects topology changes, ambiguous identities and inva
     await assert.rejects(readPublishedAssets(root, 'sample', { dsh: bundle }), unsupported(diagnostic))
   }
   await writeFile(join(root, 'cordis.patch.yml'), '- {id: existing, disabled: true}\n')
-  await assert.rejects(readPublishedAssets(root, 'sample', { dsh: bundle }), unsupported(/exactly one self-package insert row is required/))
+  await assert.rejects(readPublishedAssets(root, 'sample', { dsh: bundle }), unsupported(/at least one package insert entry is required/))
   await writeFile(join(root, 'cordis.patch.yml'), '- {id: self, config: {}}\n' + insertion)
   await assert.rejects(readPublishedAssets(root, 'sample', { dsh: bundle }), unsupported(/override cannot target its own inserted id self/))
+})
+
+
+test('multi-entry bundles preserve ordered self-package roots and subpaths across insertion rows', async t => {
+  const root = await fixture(t)
+  const patch = '# knowledge services\n- insert:\n  - {id: service, name: "@scope/sample/knowledge", config: {embeddingProvider: none}}\n  - {id: tools, name: "@scope/sample/tool-knowledge"}\n- {id: base, disabled: true}\n- insert: [{id: ui, name: "@scope/sample"}]\n'
+  await writeFile(join(root, 'cordis.patch.yml'), patch)
+  const result = await readPublishedAssets(root, '@scope/sample', { dsh: bundle })
+  assert.equal(new TextDecoder().decode(result?.assets['cordis.patch.yml']), patch)
+  for (const name of ['another', '@scope/sample-other', '@scope/sample/', '@scope/sample/../other', '@scope/sample/./other', '@scope/sample/node_modules/other', '@scope/sample/a//b', '@scope/sample/a?b', '@scope/sample/a%2fb']) {
+    await writeFile(join(root, 'cordis.patch.yml'), `- insert: [{id: service, name: "${name}"}]`)
+    await assert.rejects(readPublishedAssets(root, '@scope/sample', { dsh: bundle }), unsupported(/Entry must load its published package or a safe subpath/))
+  }
+  for (const rows of ['- insert: [{id: service, name: "@scope/sample/a"}, {id: service, name: "@scope/sample/b"}]', '- insert: [{id: service, name: "@scope/sample/a"}]\n- insert: [{id: service, name: "@scope/sample/b"}]']) {
+    await writeFile(join(root, 'cordis.patch.yml'), rows)
+    await assert.rejects(readPublishedAssets(root, '@scope/sample', { dsh: bundle }), unsupported(/duplicate inserted id service/))
+  }
+  await writeFile(join(root, 'cordis.patch.yml'), patch + '- {id: tools, config: {}}\n')
+  await assert.rejects(readPublishedAssets(root, '@scope/sample', { dsh: bundle }), unsupported(/override cannot target its own inserted id tools/))
 })

@@ -1,0 +1,15 @@
+{
+  "package": "forge-multi-bundle",
+  "entries": [
+    "knowledge",
+    "tool-knowledge",
+    "ui-knowledge"
+  ],
+  "configurationRetained": true,
+  "allEntriesActivated": true,
+  "disabledUpdatePreserved": true,
+  "coldRestore": true,
+  "obsoleteMemberUnloaded": true,
+  "allEntriesRemoved": true,
+  "removalRestored": true
+}
